@@ -997,6 +997,40 @@ function renderExportar() {
         </div>
       </div>
 
+
+      <div class="card" style="grid-column:1/-1;border:2px solid var(--ice2)">
+        <div class="card-header" style="background:var(--ice)">
+          <span class="card-title">🗄️ Backup de Base de Datos</span>
+        </div>
+        <div class="card-body" style="padding:20px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+            <div>
+              <div style="font-weight:700;color:var(--navy);margin-bottom:6px;font-size:14px">⬇ Descargar Backup</div>
+              <p style="color:var(--gray500);font-size:13px;margin-bottom:14px">
+                Exporta <strong>todos los datos</strong> en un archivo JSON.<br>
+                Guardalo en Google Drive o pendrive como copia de seguridad.
+              </p>
+              <a class="btn btn-primary" href="/api/backup" download>🗄️ Descargar backup (.json)</a>
+            </div>
+            <div>
+              <div style="font-weight:700;color:var(--navy);margin-bottom:6px;font-size:14px">⬆ Restaurar Backup</div>
+              <p style="color:var(--gray500);font-size:13px;margin-bottom:14px">
+                Carga un backup previo para restaurar todos los datos.<br>
+                <strong style="color:var(--red)">⚠ Reemplaza todos los datos actuales.</strong>
+              </p>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="file" id="backup-file" accept=".json" style="display:none" onchange="restaurarBackup(this)">
+                <button class="btn btn-ghost" onclick="document.getElementById('backup-file').click()">📂 Seleccionar .json</button>
+                <span id="backup-status" style="font-size:12px;color:var(--gray500)"></span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:16px;padding:12px 16px;background:var(--gray50);border-radius:var(--radius-sm);font-size:12.5px;color:var(--gray500);border:1px solid var(--gray200)">
+            💡 <strong>Recomendación:</strong> Hacer backup al menos una vez por semana. Guardarlo en Google Drive con nombre del mes: <code>backup_marzo_2026.json</code>
+          </div>
+        </div>
+      </div>
+
       <div class="card" style="grid-column:1/-1">
         <div class="card-header">
           <span class="card-title">📅 Resumen del Período</span>
@@ -1306,6 +1340,68 @@ function estadoBadge(estado) {
   };
   const [cls, label] = map[estado] || ['', estado];
   return `<span class="badge ${cls}">${label}</span>`;
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  BACKUP & RESTAURAR
+// ══════════════════════════════════════════════════════════
+async function restaurarBackup(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('backup-status');
+  status.textContent = 'Leyendo archivo...';
+  status.style.color = 'var(--gray500)';
+
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+
+    if (!data.agentes || !data.tickets) {
+      status.textContent = '❌ Archivo inválido';
+      status.style.color = 'var(--red)';
+      return;
+    }
+
+    const meta = data.metadata || {};
+    const confirm_msg = `¿Restaurar backup?\n\n` +
+      `Fecha del backup: ${meta.fecha_backup ? new Date(meta.fecha_backup).toLocaleString('es-AR') : 'desconocida'}\n` +
+      `Agentes: ${data.agentes.length}\n` +
+      `Tickets: ${data.tickets.length}\n\n` +
+      `⚠ ATENCIÓN: Esto reemplazará TODOS los datos actuales.`;
+
+    if (!confirm(confirm_msg)) {
+      status.textContent = 'Cancelado';
+      input.value = '';
+      return;
+    }
+
+    status.textContent = 'Restaurando...';
+    const res = await fetch('/api/restaurar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Error al restaurar');
+    }
+
+    const result = await res.json();
+    status.textContent = `✅ Restaurado: ${result.agentes_restaurados} agentes, ${result.tickets_restaurados} tickets`;
+    status.style.color = 'var(--green)';
+    toast(`Backup restaurado correctamente — ${result.tickets_restaurados} tickets`, 'success');
+    input.value = '';
+
+    // Reload dashboard
+    setTimeout(() => navigate('dashboard'), 1500);
+
+  } catch (err) {
+    status.textContent = '❌ ' + err.message;
+    status.style.color = 'var(--red)';
+    toast('Error al restaurar: ' + err.message, 'error');
+  }
 }
 
 // ══════════════════════════════════════════════════════════

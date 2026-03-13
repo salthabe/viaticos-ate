@@ -560,6 +560,117 @@ def exportar_pdf(anio: int, mes: int):
     doc.build([ht, Spacer(1, 0.5*cm), t])
     return FileResponse(path, filename=filename, media_type="application/pdf")
 
+
+# ── BACKUP ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/backup")
+def descargar_backup():
+    import json
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM agentes ORDER BY id")
+        agentes = _rows(cur)
+        cur.execute("SELECT * FROM categorias ORDER BY id")
+        categorias = _rows(cur)
+        cur.execute("SELECT * FROM tickets ORDER BY id")
+        tickets = _rows(cur)
+        for t in tickets:
+            for k in ("fecha_gasto", "creado_en", "revisado_en"):
+                if t.get(k) and not isinstance(t[k], str):
+                    t[k] = t[k].isoformat()
+        cur.execute("SELECT * FROM periodos ORDER BY id")
+        periodos = _rows(cur)
+        for a in agentes:
+            if a.get("creado_en") and not isinstance(a["creado_en"], str):
+                a["creado_en"] = a["creado_en"].isoformat()
+
+    backup = {
+        "metadata": {
+            "sistema": "Viaticos ATE",
+            "version": "1.0",
+            "fecha_backup": datetime.now().isoformat(),
+            "motor": "postgresql" if USE_PG else "sqlite",
+            "totales": {
+                "agentes": len(agentes),
+                "categorias": len(categorias),
+                "tickets": len(tickets),
+                "periodos": len(periodos),
+            }
+        },
+        "agentes":    agentes,
+        "categorias": categorias,
+        "tickets":    tickets,
+        "periodos":   periodos,
+    }
+    filename = f"backup_viaticos_ATE_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    path = os.path.join(EXPORTS_DIR, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(backup, f, ensure_ascii=False, indent=2)
+    return FileResponse(path, filename=filename, media_type="application/json")
+
+
+@app.post("/api/restaurar")
+async def restaurar_backup(request: dict):
+    import json
+    if "tickets" not in request or "agentes" not in request:
+        raise HTTPException(400, "Archivo de backup invalido")
+    with get_db() as conn:
+        cur = conn.cursor()
+        for tabla in ("periodos", "tickets", "agentes"):
+            cur.execute(f"DELETE FROM {tabla}")
+        for a in request.get("agentes", []):
+            if USE_PG:
+                cur.execute("""
+                    INSERT INTO agentes (id,nombre,cuit,cbu,banco,alias,tope_mensual,activo,creado_en)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id) DO UPDATE SET nombre=EXCLUDED.nombre,cuit=EXCLUDED.cuit,
+                    cbu=EXCLUDED.cbu,banco=EXCLUDED.banco,alias=EXCLUDED.alias,
+                    tope_mensual=EXCLUDED.tope_mensual,activo=EXCLUDED.activo
+                """, (a["id"],a["nombre"],a.get("cuit"),a.get("cbu"),a.get("banco"),
+                      a.get("alias"),a.get("tope_mensual",0),a.get("activo",1),a.get("creado_en")))
+            else:
+                cur.execute("""INSERT OR REPLACE INTO agentes
+                    (id,nombre,cuit,cbu,banco,alias,tope_mensual,activo,creado_en)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (a["id"],a["nombre"],a.get("cuit"),a.get("cbu"),a.get("banco"),
+                     a.get("alias"),a.get("tope_mensual",0),a.get("activo",1),a.get("creado_en")))
+        for t in request.get("tickets", []):
+            if USE_PG:
+                cur.execute("""INSERT INTO tickets
+                    (id,agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor,estado,
+                    motivo_rechazo,valor_aprobado,creado_en,revisado_en,revisado_por)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
+                    (t["id"],t["agente_id"],t["fecha_gasto"],t.get("categoria_id"),t.get("comprobante"),
+                     t.get("descripcion"),t["valor"],t.get("estado","pendiente"),t.get("motivo_rechazo"),
+                     t.get("valor_aprobado"),t.get("creado_en"),t.get("revisado_en"),t.get("revisado_por")))
+            else:
+                cur.execute("""INSERT OR REPLACE INTO tickets
+                    (id,agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor,estado,
+                    motivo_rechazo,valor_aprobado,creado_en,revisado_en,revisado_por)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (t["id"],t["agente_id"],t["fecha_gasto"],t.get("categoria_id"),t.get("comprobante"),
+                     t.get("descripcion"),t["valor"],t.get("estado","pendiente"),t.get("motivo_rechazo"),
+                     t.get("valor_aprobado"),t.get("creado_en"),t.get("revisado_en"),t.get("revisado_por")))
+        for p in request.get("periodos", []):
+            if USE_PG:
+                cur.execute("""INSERT INTO periodos (id,agente_id,anio,mes,tope_override,cerrado)
+                    VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
+                    (p["id"],p["agente_id"],p["anio"],p["mes"],p.get("tope_override"),p.get("cerrado",0)))
+            else:
+                cur.execute("""INSERT OR REPLACE INTO periodos (id,agente_id,anio,mes,tope_override,cerrado)
+                    VALUES (?,?,?,?,?,?)""",
+                    (p["id"],p["agente_id"],p["anio"],p["mes"],p.get("tope_override"),p.get("cerrado",0)))
+        if USE_PG:
+            for tabla in ("agentes", "tickets", "periodos"):
+                cur.execute(f"SELECT setval(pg_get_serial_sequence('{tabla}','id'), COALESCE(MAX(id),1)) FROM {tabla}")
+    meta = request.get("metadata", {})
+    return {
+        "mensaje": "Backup restaurado correctamente",
+        "agentes_restaurados": len(request.get("agentes", [])),
+        "tickets_restaurados": len(request.get("tickets", [])),
+        "fecha_backup_original": meta.get("fecha_backup", "desconocida"),
+    }
+
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
