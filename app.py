@@ -401,6 +401,383 @@ def configurar_tope(data: PeriodoTope):
             """, (data.agente_id, data.anio, data.mes, data.tope_override))
     return {"mensaje": "Tope configurado"}
 
+
+# ── ELIMINAR AGENTE ───────────────────────────────────────────────────────────
+
+@app.delete("/api/agentes/{agente_id}")
+def eliminar_agente(agente_id: int, forzar: bool = False):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) as n FROM tickets WHERE agente_id={PH}", (agente_id,))
+        row = _row(cur)
+        cant = row["n"] if row else 0
+        if cant > 0 and not forzar:
+            raise HTTPException(409, f"El agente tiene {cant} ticket(s). Usar forzar=true para eliminar junto con sus tickets.")
+        if forzar:
+            cur.execute(f"DELETE FROM periodos WHERE agente_id={PH}", (agente_id,))
+            cur.execute(f"DELETE FROM tickets WHERE agente_id={PH}", (agente_id,))
+        cur.execute(f"DELETE FROM agentes WHERE id={PH}", (agente_id,))
+    return {"mensaje": "Agente eliminado"}
+
+
+# ── IMPORTACIÓN MASIVA EXCEL ──────────────────────────────────────────────────
+
+class ImportResult(BaseModel):
+    insertados: int
+    duplicados: int
+    errores: list
+    detalle: list
+
+@app.post("/api/importar/modelo")
+def descargar_modelo():
+    """Genera y descarga el Excel modelo para carga masiva de tickets."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Tickets"
+
+    # Header
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "SINDICATO ATE — Plantilla de Importación Masiva de Tickets"
+    ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    headers = ["agente_nombre *", "fecha_gasto * (AAAA-MM-DD)", "categoria", "comprobante", "descripcion", "valor *", "notas_internas"]
+    col_widths = [28, 18, 16, 18, 32, 14, 24]
+    for c, (h, w) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2d6a9f")
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        ws.column_dimensions[chr(64+c)].width = w
+    ws.row_dimensions[2].height = 32
+
+    # Instrucciones en fila 3
+    ws.merge_cells("A3:G3")
+    ws["A3"] = "⚠ IMPORTANTE: agente_nombre debe coincidir EXACTAMENTE con el nombre registrado en el sistema. fecha_gasto formato: 2026-03-15. valor: solo números."
+    ws["A3"].font = Font(size=10, color="7B341E")
+    ws["A3"].fill = PatternFill("solid", fgColor="FEF3C7")
+    ws["A3"].alignment = Alignment(wrap_text=True)
+    ws.row_dimensions[3].height = 28
+
+    # Filas de ejemplo
+    ejemplos = [
+        ("Seccional Buenos Aires", "2026-03-05", "Transporte", "FC-0001-00001", "Viaje a sede central", 12500, ""),
+        ("Seccional La Plata",     "2026-03-07", "Combustible","FC-0004-00002", "Carga nafta camioneta", 8500, ""),
+        ("Seccional Rosario",      "2026-03-11", "Alojamiento","FC-0002-00015", "2 noches congreso", 18000, ""),
+    ]
+    for ri, ej in enumerate(ejemplos, 4):
+        for c, v in enumerate(ej, 1):
+            cell = ws.cell(row=ri, column=c, value=v)
+            cell.fill = PatternFill("solid", fgColor="EBF3FB")
+            if c == 6:
+                cell.number_format = '#,##0.00'
+
+    # Hoja de referencia de agentes
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT nombre FROM agentes WHERE activo=1 ORDER BY nombre")
+        agentes_lista = [r["nombre"] for r in _rows(cur)]
+        cur.execute("SELECT nombre FROM categorias WHERE activa=1 ORDER BY nombre")
+        cats_lista = [r["nombre"] for r in _rows(cur)]
+
+    ws2 = wb.create_sheet("Referencia")
+    ws2["A1"] = "Agentes registrados (copiar nombre exacto)"; ws2["A1"].font = Font(bold=True, color="FFFFFF"); ws2["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws2["B1"] = "Categorías disponibles"; ws2["B1"].font = Font(bold=True, color="FFFFFF"); ws2["B1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    for i, nombre in enumerate(agentes_lista, 2):
+        ws2.cell(row=i, column=1, value=nombre)
+    for i, cat in enumerate(cats_lista, 2):
+        ws2.cell(row=i, column=2, value=cat)
+    ws2.column_dimensions["A"].width = 32
+    ws2.column_dimensions["B"].width = 18
+
+    filename = "modelo_importacion_tickets_ATE.xlsx"
+    path = os.path.join(EXPORTS_DIR, filename)
+    wb.save(path)
+    return FileResponse(path, filename=filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.post("/api/importar/tickets")
+async def importar_tickets(request: dict):
+    """
+    Recibe lista de tickets desde el frontend (parseado del Excel).
+    Verifica duplicados por (agente_nombre, fecha_gasto, comprobante, valor).
+    """
+    filas = request.get("filas", [])
+    if not filas:
+        raise HTTPException(400, "No hay filas para importar")
+
+    insertados = 0
+    duplicados = 0
+    errores = []
+    detalle = []
+
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Cargar mapa agente_nombre -> id
+        cur.execute("SELECT id, nombre FROM agentes WHERE activo=1")
+        agentes_map = {r["nombre"].strip().lower(): r["id"] for r in _rows(cur)}
+
+        # Cargar mapa categoria_nombre -> id
+        cur.execute("SELECT id, nombre FROM categorias WHERE activa=1")
+        cats_map = {r["nombre"].strip().lower(): r["id"] for r in _rows(cur)}
+
+        for i, fila in enumerate(filas, 1):
+            fila_num = i + 3  # filas 4+ en el Excel (1=header titulo, 2=headers, 3=instruccion)
+
+            agente_nombre = str(fila.get("agente_nombre", "")).strip()
+            fecha_gasto   = str(fila.get("fecha_gasto", "")).strip()
+            categoria     = str(fila.get("categoria", "")).strip()
+            comprobante   = str(fila.get("comprobante", "")).strip() or None
+            descripcion   = str(fila.get("descripcion", "")).strip() or None
+            valor_raw     = fila.get("valor", "")
+
+            # Validaciones básicas
+            if not agente_nombre:
+                errores.append(f"Fila {fila_num}: agente_nombre vacío"); continue
+            if not fecha_gasto:
+                errores.append(f"Fila {fila_num}: fecha_gasto vacía"); continue
+
+            # Buscar agente (case-insensitive)
+            agente_id = agentes_map.get(agente_nombre.lower())
+            if not agente_id:
+                errores.append(f"Fila {fila_num}: Agente '{agente_nombre}' no encontrado en el sistema"); continue
+
+            # Validar fecha
+            try:
+                datetime.strptime(fecha_gasto, "%Y-%m-%d")
+            except ValueError:
+                try:
+                    # Intentar formato DD/MM/AAAA
+                    dt = datetime.strptime(fecha_gasto, "%d/%m/%Y")
+                    fecha_gasto = dt.strftime("%Y-%m-%d")
+                except:
+                    errores.append(f"Fila {fila_num}: Fecha inválida '{fecha_gasto}' — usar formato AAAA-MM-DD"); continue
+
+            # Validar valor
+            try:
+                valor = float(str(valor_raw).replace(",", ".").replace("$", "").strip())
+                if valor <= 0:
+                    raise ValueError()
+            except:
+                errores.append(f"Fila {fila_num}: Valor inválido '{valor_raw}'"); continue
+
+            # Categoría opcional
+            categoria_id = cats_map.get(categoria.lower()) if categoria else None
+
+            # Verificar duplicado: mismo agente + fecha + comprobante + valor
+            dup_check = [agente_id, fecha_gasto, valor]
+            dup_q = f"SELECT id FROM tickets WHERE agente_id={PH} AND fecha_gasto={PH} AND valor={PH}"
+            if comprobante:
+                dup_q += f" AND comprobante={PH}"
+                dup_check.append(comprobante)
+            cur.execute(dup_q, dup_check)
+            existing = _row(cur)
+            if existing:
+                duplicados += 1
+                detalle.append({"fila": fila_num, "estado": "duplicado", "agente": agente_nombre,
+                                 "fecha": fecha_gasto, "valor": valor, "ticket_existente": existing["id"]})
+                continue
+
+            # Insertar
+            new_id = _insert(conn,
+                f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor) VALUES ({PH},{PH},{PH},{PH},{PH},{PH})",
+                (agente_id, fecha_gasto, categoria_id, comprobante, descripcion, valor))
+            insertados += 1
+            detalle.append({"fila": fila_num, "estado": "insertado", "id": new_id,
+                            "agente": agente_nombre, "fecha": fecha_gasto, "valor": valor})
+
+    return {"insertados": insertados, "duplicados": duplicados,
+            "errores": errores, "detalle": detalle}
+
+
+# ── EXPORTACIÓN EXCEL PERSONALIZADA ──────────────────────────────────────────
+
+@app.get("/api/exportar/excel/custom")
+def exportar_excel_custom(
+    anio: Optional[int] = None,
+    mes: Optional[int] = None,
+    agente_id: Optional[int] = None,
+    estado: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    incluir_transferencias: bool = True,
+    incluir_tickets: bool = True,
+    incluir_semanal: bool = False,
+):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    # Obtener tickets con filtros
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = """SELECT t.*, a.nombre as agente_nombre, a.cuit, a.cbu, a.banco, a.alias,
+                      c.nombre as categoria_nombre
+               FROM tickets t
+               LEFT JOIN agentes a ON t.agente_id = a.id
+               LEFT JOIN categorias c ON t.categoria_id = c.id
+               WHERE 1=1"""
+        params = []
+        if agente_id:
+            q += f" AND t.agente_id={PH}"; params.append(agente_id)
+        if estado:
+            q += f" AND t.estado={PH}"; params.append(estado)
+        if anio:
+            q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
+        if mes:
+            q += f" AND {_month_filter('t.fecha_gasto')}"; params.append(_mp(mes))
+        if desde:
+            q += f" AND t.fecha_gasto >= {PH}"; params.append(desde)
+        if hasta:
+            q += f" AND t.fecha_gasto <= {PH}"; params.append(hasta)
+        q += " ORDER BY a.nombre, t.fecha_gasto"
+        cur.execute(q, params)
+        tickets = _rows(cur)
+        for t in tickets:
+            if t.get("fecha_gasto") and not isinstance(t["fecha_gasto"], str):
+                t["fecha_gasto"] = t["fecha_gasto"].strftime("%Y-%m-%d")
+
+    # Título dinámico
+    partes = []
+    if anio and mes:  partes.append(f"{calendar.month_name[mes].upper()} {anio}")
+    elif anio:        partes.append(str(anio))
+    if estado:        partes.append(estado.upper())
+    if desde or hasta:
+        partes.append(f"{desde or ''} al {hasta or ''}")
+    titulo_filtro = " — ".join(partes) if partes else "TODOS LOS REGISTROS"
+
+    wb = openpyxl.Workbook()
+    first = True
+
+    colores = {"aprobado":"D4EDDA","rechazado":"F8D7DA","debito_parcial":"FFF3CD","pendiente":"FFFFFF"}
+
+    if incluir_tickets:
+        ws = wb.active if first else wb.create_sheet("Tickets")
+        ws.title = "Tickets"
+        first = False
+
+        ws.merge_cells("A1:I1")
+        ws["A1"] = f"SINDICATO ATE — TICKETS — {titulo_filtro}"
+        ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+        ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+        ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 26
+
+        hdrs = ["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Revisado por"]
+        for c, h in enumerate(hdrs, 1):
+            cell = ws.cell(row=2, column=c, value=h)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="2d6a9f")
+            cell.alignment = Alignment(horizontal="center")
+
+        for ri, t in enumerate(tickets, 3):
+            color = colores.get(t["estado"], "FFFFFF")
+            vals = [t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre",""),
+                    t.get("comprobante",""), t.get("descripcion",""), t["valor"],
+                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("revisado_por","")]
+            for c, v in enumerate(vals, 1):
+                cell = ws.cell(row=ri, column=c, value=v)
+                cell.fill = PatternFill("solid", fgColor=color)
+                if c in (6,8): cell.number_format = '"$"#,##0.00'
+
+        # Fila totales
+        tr = len(tickets) + 3
+        ws.cell(row=tr, column=5, value="TOTAL").font = Font(bold=True)
+        ws.cell(row=tr, column=6, value=sum(t["valor"] for t in tickets)).number_format = '"$"#,##0.00'
+        ws.cell(row=tr, column=6).font = Font(bold=True)
+        ws.cell(row=tr, column=8, value=sum(t.get("valor_aprobado") or 0 for t in tickets)).number_format = '"$"#,##0.00'
+        ws.cell(row=tr, column=8).font = Font(bold=True)
+
+        for col, w in zip("ABCDEFGHI", [28,12,16,18,32,14,14,14,16]):
+            ws.column_dimensions[col].width = w
+
+    if incluir_transferencias and anio and mes:
+        ws2 = wb.active if first else wb.create_sheet("Transferencias")
+        ws2.title = "Transferencias"
+        first = False
+
+        res = resumen(anio, mes)
+        if agente_id:
+            res = [r for r in res if r["id"] == agente_id]
+
+        ws2.merge_cells("A1:H1")
+        ws2["A1"] = f"SINDICATO ATE — TRANSFERENCIAS — {titulo_filtro}"
+        ws2["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+        ws2["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+        ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ws2.row_dimensions[1].height = 26
+
+        hdrs2 = ["Agente","CUIT","CBU","Banco/Alias","Total Presentado","Aprobado","Tope","A TRANSFERIR"]
+        for c, h in enumerate(hdrs2, 1):
+            cell = ws2.cell(row=2, column=c, value=h)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="2d6a9f")
+
+        total_t = 0
+        for ri, ag in enumerate(res, 3):
+            tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
+            vals = [ag["nombre"], ag.get("cuit",""), ag.get("cbu",""),
+                    ag.get("banco","") or ag.get("alias",""),
+                    tp, ag["total_aprobado"]+ag["total_debito"], ag["tope_efectivo"], ag["a_transferir"]]
+            for c, v in enumerate(vals, 1):
+                cell = ws2.cell(row=ri, column=c, value=v)
+                if c in (5,6,7,8): cell.number_format = '"$"#,##0.00'
+                if ri % 2 == 0: cell.fill = PatternFill("solid", fgColor="EBF3FB")
+            total_t += ag["a_transferir"]
+        tr2 = len(res) + 3
+        ws2.cell(row=tr2, column=1, value="TOTAL").font = Font(bold=True)
+        ct = ws2.cell(row=tr2, column=8, value=total_t)
+        ct.font = Font(bold=True, color="FFFFFF"); ct.fill = PatternFill("solid", fgColor="1a3a5c")
+        ct.number_format = '"$"#,##0.00'
+        for i, w in enumerate([30,16,26,20,16,16,14,16], 1):
+            ws2.column_dimensions[get_column_letter(i)].width = w
+
+    if incluir_semanal and anio and mes:
+        ws3 = wb.active if first else wb.create_sheet("Semanal")
+        ws3.title = "Semanal"; first = False
+        ws3.merge_cells("A1:D1")
+        ws3["A1"] = f"RESUMEN SEMANAL — {titulo_filtro}"
+        ws3["A1"].font = Font(bold=True, size=12, color="FFFFFF")
+        ws3["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+        ws3["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        row = 2
+        for s in resumen_semanal(anio, mes):
+            ws3.cell(row=row, column=1, value=f"Semana {s['semana']}").font = Font(bold=True, color="FFFFFF")
+            ws3.cell(row=row, column=1).fill = PatternFill("solid", fgColor="2d6a9f")
+            ws3.merge_cells(f"A{row}:D{row}"); row += 1
+            for c, h in enumerate(["Agente","Fecha","Descripción","Aprobado"], 1):
+                ws3.cell(row=row, column=c, value=h).font = Font(bold=True)
+            row += 1
+            for t in s["tickets"]:
+                ws3.cell(row=row,column=1,value=t["agente_nombre"])
+                ws3.cell(row=row,column=2,value=t["fecha_gasto"])
+                ws3.cell(row=row,column=3,value=t.get("descripcion",""))
+                ws3.cell(row=row,column=4,value=t.get("valor_aprobado",0)).number_format='"$"#,##0.00'
+                row += 1
+            ws3.cell(row=row,column=3,value="TOTAL").font=Font(bold=True)
+            ws3.cell(row=row,column=4,value=s["total"]).font=Font(bold=True)
+            ws3.cell(row=row,column=4).number_format='"$"#,##0.00'
+            row += 2
+        for col in "ABCD": ws3.column_dimensions[col].width = 28
+
+    # Partes del nombre de archivo
+    fname_parts = ["export_ATE"]
+    if anio: fname_parts.append(str(anio))
+    if mes:  fname_parts.append(f"{mes:02d}")
+    if estado: fname_parts.append(estado)
+    filename = "_".join(fname_parts) + ".xlsx"
+    path = os.path.join(EXPORTS_DIR, filename)
+    wb.save(path)
+    return FileResponse(path, filename=filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 # ── EXPORTACIÓN EXCEL ─────────────────────────────────────────────────────────
 
 @app.get("/api/exportar/excel")
