@@ -526,6 +526,9 @@ tbody td {
         <span class="icon">🎯</span> Topes Mensuales
       </button>
       <div class="nav-section">Reportes</div>
+      <button class="nav-item" onclick="navigate('reportes')">
+        <span class="icon">📈</span> Reportes
+      </button>
       <button class="nav-item" onclick="navigate('exportar')">
         <span class="icon">📥</span> Exportar
       </button>
@@ -624,6 +627,7 @@ async function navigate(page) {
     tickets: 'Tickets de Viáticos',
     agentes: 'Gestión de Agentes',
     topes: 'Topes Mensuales',
+    reportes: 'Reportes y Estadísticas',
     exportar: 'Exportar Reportes'
   };
 
@@ -637,6 +641,7 @@ async function navigate(page) {
   else if (page === 'tickets') await renderTickets();
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
+  else if (page === 'reportes') await renderReportes();
   else if (page === 'exportar') renderExportar();
 }
 
@@ -645,6 +650,20 @@ async function navigate(page) {
 // ══════════════════════════════════════════════════════════
 function periodBar() {
   const years = [2023, 2024, 2025, 2026];
+  // Load cierre badge async after render
+  setTimeout(async () => {
+    const el = document.getElementById('cierre-badge');
+    if (el) el.innerHTML = await getBadgeCierre();
+    const btn = document.getElementById('btn-cierre');
+    if (btn) {
+      try {
+        const est = await api('GET', `/periodos_cierre/estado?anio=${state.anio}&mes=${state.mes}`);
+        btn.textContent = est.cerrado ? '🔓 Reabrir período' : '🔒 Cerrar período';
+        btn.style.color = est.cerrado ? '#92400e' : '#166534';
+      } catch {}
+    }
+  }, 0);
+
   return `
   <div class="period-bar">
     <span class="period-label">Período</span>
@@ -654,7 +673,9 @@ function periodBar() {
     <select class="period-select" onchange="changePeriod(null, this.value)">
       ${years.map(y => `<option value="${y}" ${state.anio === y ? 'selected' : ''}>${y}</option>`).join('')}
     </select>
-    <span style="margin-left:4px;font-size:13px;font-weight:600;color:#2d6a9f">${MESES[state.mes-1]} ${state.anio}</span>
+    <span id="cierre-badge" style="margin-left:6px"></span>
+    <span style="flex:1"></span>
+    <button id="btn-cierre" class="btn btn-ghost btn-sm" onclick="toggleCierrePeriodo()" style="font-size:12px">🔒 Cerrar período</button>
   </div>`;
 }
 
@@ -679,6 +700,7 @@ async function renderDashboard() {
 
   // Topbar action
   document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
   document.getElementById('content').innerHTML = `
@@ -797,6 +819,7 @@ async function renderTickets() {
   await loadTickets();
 
   document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
   const filtered = filterTickets();
@@ -864,6 +887,8 @@ function renderTicketsTableHTML(tickets) {
         <td>
           <div style="display:flex;gap:4px">
             ${t.estado === 'pendiente' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revisarTicket(${t.id},'modal')" title="Revisar">⋯</button>` : ''}
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="verAdjuntosTicket(${t.id})" title="Adjuntos">📎</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="verHistorialTicket(${t.id})" title="Historial">🕐</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarTicket(${t.id})" title="Eliminar">🗑</button>
           </div>
         </td>
@@ -877,7 +902,6 @@ function renderTicketsTableHTML(tickets) {
 // ══════════════════════════════════════════════════════════
 function renderAgentes() {
   document.getElementById('topbar-actions').innerHTML = `
-    <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalAgente()">+ Nuevo Agente</button>`;
 
   document.getElementById('content').innerHTML = `
@@ -1717,6 +1741,345 @@ async function ejecutarImportacion() {
     btn.disabled = false;
     btn.textContent = 'Reintentar';
   }
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  HISTORIAL DE TICKET
+// ══════════════════════════════════════════════════════════
+async function verHistorialTicket(ticketId) {
+  const hist = await api('GET', `/tickets/${ticketId}/historial`);
+  const rows = hist.length ? hist.map(h => `
+    <tr>
+      <td style="font-size:12px;color:var(--gray500)">${h.fecha ? h.fecha.replace('T',' ').slice(0,16) : '-'}</td>
+      <td><strong>${h.campo}</strong></td>
+      <td style="color:var(--red);text-decoration:line-through">${h.valor_anterior || '-'}</td>
+      <td style="color:var(--green)">${h.valor_nuevo || '-'}</td>
+      <td style="font-size:12px">${h.usuario || '-'}</td>
+    </tr>`).join('') :
+    '<tr><td colspan="5" style="text-align:center;color:var(--gray500);padding:16px">Sin cambios registrados</td></tr>';
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">🕐 Historial del Ticket #${ticketId}</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:var(--ice)">
+            <th style="padding:10px 12px;text-align:left;font-size:12px">Fecha</th>
+            <th style="padding:10px 12px;text-align:left;font-size:12px">Campo</th>
+            <th style="padding:10px 12px;text-align:left;font-size:12px">Antes</th>
+            <th style="padding:10px 12px;text-align:left;font-size:12px">Después</th>
+            <th style="padding:10px 12px;text-align:left;font-size:12px">Usuario</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+    </div>
+  `);
+}
+
+// ══════════════════════════════════════════════════════════
+//  ADJUNTOS
+// ══════════════════════════════════════════════════════════
+async function verAdjuntosTicket(ticketId) {
+  const adjuntos = await api('GET', `/tickets/${ticketId}/adjuntos`);
+
+  const lista = adjuntos.length ? adjuntos.map(a => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--gray200);border-radius:8px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:20px">${a.mime_type?.includes('pdf') ? '📄' : '🖼️'}</span>
+        <div>
+          <div style="font-weight:600;font-size:13px">${a.nombre_archivo}</div>
+          <div style="font-size:11px;color:var(--gray500)">${a.subido_en ? a.subido_en.replace('T',' ').slice(0,16) : ''}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <a class="btn btn-ghost btn-sm" href="/api/adjuntos/${a.id}" target="_blank">👁 Ver</a>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="eliminarAdjunto(${a.id}, ${ticketId})">🗑</button>
+      </div>
+    </div>`).join('') :
+    '<div style="text-align:center;color:var(--gray500);padding:20px">Sin adjuntos cargados</div>';
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">📎 Adjuntos del Ticket #${ticketId}</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="adjuntos-lista">${lista}</div>
+      <div style="margin-top:16px;border-top:1px solid var(--gray200);padding-top:16px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px">Agregar comprobante</div>
+        <div style="font-size:12px;color:var(--gray500);margin-bottom:10px">JPG, PNG o PDF — máx. 5MB</div>
+        <input type="file" id="adj-file" accept="image/*,.pdf" style="display:none" onchange="subirAdjunto(this, ${ticketId})">
+        <button class="btn btn-outline" onclick="document.getElementById('adj-file').click()">📎 Seleccionar archivo</button>
+        <span id="adj-status" style="font-size:12px;color:var(--gray500);margin-left:8px"></span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+    </div>
+  `);
+}
+
+async function subirAdjunto(input, ticketId) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('adj-status');
+  status.textContent = 'Subiendo...';
+  try {
+    const fd = new FormData();
+    fd.append('archivo', file);
+    const res = await fetch(`/api/tickets/${ticketId}/adjunto`, { method: 'POST', body: fd });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    const data = await res.json();
+    status.textContent = '';
+    toast(`Adjunto "${data.nombre}" subido`, 'success');
+    closeModal();
+    verAdjuntosTicket(ticketId);
+  } catch(e) {
+    status.textContent = '❌ ' + e.message;
+  }
+}
+
+async function eliminarAdjunto(adjId, ticketId) {
+  if (!confirm('¿Eliminar este adjunto?')) return;
+  await api('DELETE', `/adjuntos/${adjId}`);
+  toast('Adjunto eliminado');
+  closeModal();
+  verAdjuntosTicket(ticketId);
+}
+
+// ══════════════════════════════════════════════════════════
+//  CIERRE DE PERIODO
+// ══════════════════════════════════════════════════════════
+async function toggleCierrePeriodo() {
+  const estado = await api('GET', `/periodos_cierre/estado?anio=${state.anio}&mes=${state.mes}`);
+  const cerrado = estado.cerrado;
+  const mesNombre = MESES[state.mes-1];
+
+  if (cerrado) {
+    if (!confirm(`¿Reabrir el período ${mesNombre} ${state.anio}?\n\nLos tickets podrán ser modificados nuevamente.`)) return;
+    await api('POST', `/periodos_cierre/reabrir?anio=${state.anio}&mes=${state.mes}`);
+    toast(`Período ${mesNombre} ${state.anio} reabierto`, 'success');
+  } else {
+    // Check pendientes first
+    const res = state.resumen || [];
+    const pendientes = res.reduce((s, a) => s + (a.cant_pendientes || 0), 0);
+    let msg = `¿Cerrar el período ${mesNombre} ${state.anio}?`;
+    if (pendientes > 0) {
+      if (!confirm(`Hay ${pendientes} ticket(s) pendientes.\n\nSi cerrás el período no podrás modificar los tickets ya revisados.\n\n¿Continuar de todos modos?`)) return;
+    } else {
+      if (!confirm(msg + '\n\nUna vez cerrado, los tickets aprobados no podrán modificarse.')) return;
+    }
+    try {
+      await api('POST', `/periodos_cierre?anio=${state.anio}&mes=${state.mes}`);
+      toast(`Período ${mesNombre} ${state.anio} cerrado 🔒`, 'success');
+    } catch(e) {
+      toast(e.message, 'error'); return;
+    }
+  }
+  await navigate(state.page);
+}
+
+async function getBadgeCierre() {
+  try {
+    const est = await api('GET', `/periodos_cierre/estado?anio=${state.anio}&mes=${state.mes}`);
+    if (est.cerrado) {
+      return `<span style="background:#fef2f2;color:#991b1b;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:600;border:1px solid #fca5a5">🔒 CERRADO</span>`;
+    }
+    return `<span style="background:#f0fdf4;color:#166534;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:600;border:1px solid #86efac">🔓 Abierto</span>`;
+  } catch { return ''; }
+}
+
+// ══════════════════════════════════════════════════════════
+//  REPORTES
+// ══════════════════════════════════════════════════════════
+async function renderReportes() {
+  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('content').innerHTML = `
+    ${periodBar()}
+    <div style="display:grid;gap:20px">
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📅 Evolución Mensual ${state.anio}</span>
+        </div>
+        <div class="card-body" style="padding:20px" id="rep-mensual">
+          <div style="color:var(--gray500);text-align:center">Cargando...</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">📂 Por Categoría</span>
+            <span style="font-size:12px;color:var(--gray500)">${MESES[state.mes-1]} ${state.anio}</span>
+          </div>
+          <div class="card-body" style="padding:20px" id="rep-cats">
+            <div style="color:var(--gray500);text-align:center">Cargando...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">👥 Por Agente — ${state.anio}</span>
+          </div>
+          <div class="card-body" style="padding:20px" id="rep-agentes">
+            <div style="color:var(--gray500);text-align:center">Cargando...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🔒 Historial de Cierres de Período</span>
+        </div>
+        <div class="card-body" style="padding:20px" id="rep-cierres">
+          <div style="color:var(--gray500);text-align:center">Cargando...</div>
+        </div>
+      </div>
+
+    </div>`;
+
+  // Load all in parallel
+  const [mensual, cats, agAnual, cierres] = await Promise.all([
+    api('GET', `/reportes/mensual_anual?anio=${state.anio}`),
+    api('GET', `/reportes/por_categoria?anio=${state.anio}&mes=${state.mes}`),
+    api('GET', `/reportes/por_agente_anual?anio=${state.anio}`),
+    api('GET', '/periodos_cierre'),
+  ]);
+
+  // --- Evolución mensual: bar chart SVG ---
+  const maxVal = Math.max(...mensual.map(m => m.total_aprobado || 0), 1);
+  const barW = 40, gap = 18, svgW = mensual.length * (barW + gap) + gap + 60;
+  const svgH = 200;
+  const chartH = 140;
+  const bars = mensual.map((m, i) => {
+    const h = Math.max(2, Math.round((m.total_aprobado / maxVal) * chartH));
+    const x = gap + 30 + i * (barW + gap);
+    const y = svgH - 40 - h;
+    const mes = MESES[m.mes - 1].slice(0, 3);
+    return `
+      <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="4" fill="#2d6a9f"/>
+      <text x="${x + barW/2}" y="${y - 5}" text-anchor="middle" font-size="9" fill="#64748b">$${Math.round(m.total_aprobado/1000)}k</text>
+      <text x="${x + barW/2}" y="${svgH - 22}" text-anchor="middle" font-size="10" fill="#64748b">${mes}</text>
+      <text x="${x + barW/2}" y="${svgH - 8}" text-anchor="middle" font-size="9" fill="#94a3b8">${m.cantidad}</text>`;
+  }).join('');
+  document.getElementById('rep-mensual').innerHTML = mensual.length ? `
+    <div style="overflow-x:auto">
+      <svg viewBox="0 0 ${Math.max(svgW, 400)} ${svgH}" style="width:100%;max-height:220px">
+        <text x="8" y="12" font-size="9" fill="#94a3b8">Aprobado</text>
+        ${bars}
+        <text x="30" y="${svgH - 20}" font-size="9" fill="#94a3b8" text-anchor="middle">mes</text>
+        <text x="30" y="${svgH - 5}" font-size="9" fill="#94a3b8" text-anchor="middle">tkt</text>
+      </svg>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
+      <div style="text-align:center;padding:10px;background:var(--ice);border-radius:8px">
+        <div style="font-size:11px;color:var(--gray500);text-transform:uppercase;margin-bottom:4px">Total año</div>
+        <div style="font-weight:700;color:var(--navy)">${fmt(mensual.reduce((s,m)=>s+(m.total_aprobado||0),0))}</div>
+      </div>
+      <div style="text-align:center;padding:10px;background:var(--ice);border-radius:8px">
+        <div style="font-size:11px;color:var(--gray500);text-transform:uppercase;margin-bottom:4px">Tickets</div>
+        <div style="font-weight:700;color:var(--navy)">${mensual.reduce((s,m)=>s+(m.cantidad||0),0)}</div>
+      </div>
+      <div style="text-align:center;padding:10px;background:var(--ice);border-radius:8px">
+        <div style="font-size:11px;color:var(--gray500);text-transform:uppercase;margin-bottom:4px">Prom. mensual</div>
+        <div style="font-weight:700;color:var(--navy)">${fmt(mensual.reduce((s,m)=>s+(m.total_aprobado||0),0) / (mensual.length||1))}</div>
+      </div>
+      <div style="text-align:center;padding:10px;background:var(--ice);border-radius:8px">
+        <div style="font-size:11px;color:var(--gray500);text-transform:uppercase;margin-bottom:4px">Pendientes hoy</div>
+        <div style="font-weight:700;color:var(--navy)">${mensual.reduce((s,m)=>s+(m.pendientes||0),0)}</div>
+      </div>
+    </div>` : '<div style="text-align:center;color:var(--gray500);padding:20px">Sin datos para este año</div>';
+
+  // --- Por categoría: horizontal bars ---
+  const maxCat = Math.max(...cats.map(c => c.total_aprobado || 0), 1);
+  document.getElementById('rep-cats').innerHTML = cats.length ? cats.map(c => {
+    const pct = Math.round((c.total_aprobado / maxCat) * 100);
+    const tasaAprobacion = c.cantidad ? Math.round((c.cant_aprobados / c.cantidad) * 100) : 0;
+    return `
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="font-weight:600">${c.categoria}</span>
+          <span style="color:var(--gray500)">${fmt(c.total_aprobado)} <small>(${c.cantidad} tkt)</small></span>
+        </div>
+        <div style="background:var(--gray200);border-radius:4px;height:8px">
+          <div style="background:var(--blue);border-radius:4px;height:8px;width:${pct}%;transition:width .4s"></div>
+        </div>
+        <div style="font-size:11px;color:var(--gray500);margin-top:3px">${tasaAprobacion}% aprobación</div>
+      </div>`;
+  }).join('') : '<div style="text-align:center;color:var(--gray500)">Sin datos</div>';
+
+  // --- Por agente anual: table ---
+  const maxAg = Math.max(...agAnual.map(a => a.total_aprobado || 0), 1);
+  document.getElementById('rep-agentes').innerHTML = agAnual.length ? `
+    <table style="width:100%;font-size:12.5px;border-collapse:collapse">
+      <thead><tr style="background:var(--ice)">
+        <th style="padding:8px;text-align:left">Agente</th>
+        <th style="padding:8px;text-align:right">Aprobado</th>
+        <th style="padding:8px;text-align:center">Tkts</th>
+        <th style="padding:8px;text-align:center">Rech.</th>
+      </tr></thead>
+      <tbody>
+        ${agAnual.map(a => {
+          const pct = Math.round((a.total_aprobado / maxAg) * 100);
+          return `<tr style="border-bottom:1px solid var(--gray100)">
+            <td style="padding:8px">
+              <div>${a.nombre}</div>
+              <div style="background:var(--gray200);border-radius:2px;height:4px;margin-top:4px">
+                <div style="background:var(--sky);border-radius:2px;height:4px;width:${pct}%"></div>
+              </div>
+            </td>
+            <td style="padding:8px;text-align:right;font-weight:600;color:var(--navy)">${fmt(a.total_aprobado)}</td>
+            <td style="padding:8px;text-align:center">${a.total_tickets || 0}</td>
+            <td style="padding:8px;text-align:center;color:${a.rechazados > 0 ? 'var(--red)' : 'var(--gray500)'}">${a.rechazados || 0}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>` : '<div style="text-align:center;color:var(--gray500)">Sin datos</div>';
+
+  // --- Cierres ---
+  document.getElementById('rep-cierres').innerHTML = cierres.length ? `
+    <table style="width:100%;font-size:13px;border-collapse:collapse">
+      <thead><tr style="background:var(--ice)">
+        <th style="padding:8px 12px;text-align:left">Período</th>
+        <th style="padding:8px 12px;text-align:left">Estado</th>
+        <th style="padding:8px 12px;text-align:left">Cerrado por</th>
+        <th style="padding:8px 12px;text-align:left">Fecha</th>
+        <th style="padding:8px 12px"></th>
+      </tr></thead>
+      <tbody>
+        ${cierres.map(c => `<tr style="border-bottom:1px solid var(--gray100)">
+          <td style="padding:8px 12px;font-weight:600">${MESES[c.mes-1]} ${c.anio}</td>
+          <td style="padding:8px 12px">
+            ${c.cerrado
+              ? '<span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:12px;font-size:11.5px;font-weight:600">🔒 Cerrado</span>'
+              : '<span style="background:#f0fdf4;color:#166534;padding:2px 8px;border-radius:12px;font-size:11.5px;font-weight:600">🔓 Abierto</span>'}
+          </td>
+          <td style="padding:8px 12px;color:var(--gray500)">${c.cerrado_por || '-'}</td>
+          <td style="padding:8px 12px;color:var(--gray500)">${c.cerrado_en ? c.cerrado_en.replace('T',' ').slice(0,16) : '-'}</td>
+          <td style="padding:8px 12px">
+            ${c.cerrado
+              ? `<button class="btn btn-ghost btn-sm" onclick="reabrirDesdeReportes(${c.anio},${c.mes})">Reabrir</button>`
+              : ''}
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` :
+    '<div style="text-align:center;color:var(--gray500);padding:20px">No hay períodos cerrados todavía</div>';
+}
+
+async function reabrirDesdeReportes(anio, mes) {
+  if (!confirm(`¿Reabrir el período ${MESES[mes-1]} ${anio}?`)) return;
+  await api('POST', `/periodos_cierre/reabrir?anio=${anio}&mes=${mes}`);
+  toast(`Período reabierto`, 'success');
+  renderReportes();
 }
 
 // ══════════════════════════════════════════════════════════

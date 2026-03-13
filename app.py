@@ -94,6 +94,32 @@ if USE_PG:
                     tope_override REAL, cerrado INTEGER DEFAULT 0,
                     UNIQUE(agente_id, anio, mes)
                 );
+                CREATE TABLE IF NOT EXISTS adjuntos (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                    nombre_archivo TEXT NOT NULL,
+                    mime_type TEXT,
+                    datos BYTEA NOT NULL,
+                    subido_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS historial (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                    campo TEXT NOT NULL,
+                    valor_anterior TEXT,
+                    valor_nuevo TEXT,
+                    usuario TEXT,
+                    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS periodos_cierre (
+                    id SERIAL PRIMARY KEY,
+                    anio INTEGER NOT NULL,
+                    mes INTEGER NOT NULL,
+                    cerrado INTEGER DEFAULT 0,
+                    cerrado_por TEXT,
+                    cerrado_en TIMESTAMP,
+                    UNIQUE(anio, mes)
+                );
             """)
             cur.execute("""
                 INSERT INTO categorias (nombre)
@@ -162,6 +188,32 @@ else:
                     anio INTEGER NOT NULL, mes INTEGER NOT NULL,
                     tope_override REAL, cerrado INTEGER DEFAULT 0,
                     UNIQUE(agente_id, anio, mes)
+                );
+                CREATE TABLE IF NOT EXISTS adjuntos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                    nombre_archivo TEXT NOT NULL,
+                    mime_type TEXT,
+                    datos BLOB NOT NULL,
+                    subido_en TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS historial (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                    campo TEXT NOT NULL,
+                    valor_anterior TEXT,
+                    valor_nuevo TEXT,
+                    usuario TEXT,
+                    fecha TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS periodos_cierre (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    anio INTEGER NOT NULL,
+                    mes INTEGER NOT NULL,
+                    cerrado INTEGER DEFAULT 0,
+                    cerrado_por TEXT,
+                    cerrado_en TEXT,
+                    UNIQUE(anio, mes)
                 );
                 INSERT OR IGNORE INTO categorias (nombre) VALUES
                     ('Transporte'),('Alojamiento'),('Alimentación'),
@@ -300,6 +352,13 @@ def revisar_ticket(ticket_id: int, data: TicketRevision):
         cur.execute(f"""UPDATE tickets SET estado={PH}, motivo_rechazo={PH}, valor_aprobado={PH},
                     revisado_en=CURRENT_TIMESTAMP, revisado_por={PH} WHERE id={PH}""",
                     (data.estado, data.motivo_rechazo, valor_aprobado, data.revisado_por, ticket_id))
+        # Log history
+        if ticket["estado"] != data.estado:
+            _registrar_historial(conn, ticket_id, "estado", ticket["estado"], data.estado, data.revisado_por)
+        if data.estado == "debito_parcial" and data.valor_aprobado is not None:
+            _registrar_historial(conn, ticket_id, "valor_aprobado", ticket.get("valor_aprobado"), valor_aprobado, data.revisado_por)
+        if data.motivo_rechazo:
+            _registrar_historial(conn, ticket_id, "motivo_rechazo", ticket.get("motivo_rechazo"), data.motivo_rechazo, data.revisado_por)
     return {"mensaje": "Ticket revisado"}
 
 @app.delete("/api/tickets/{ticket_id}")
@@ -428,7 +487,7 @@ class ImportResult(BaseModel):
     errores: list
     detalle: list
 
-@app.post("/api/importar/modelo")
+@app.get("/api/importar/modelo")
 def descargar_modelo():
     """Genera y descarga el Excel modelo para carga masiva de tickets."""
     import openpyxl
@@ -1058,3 +1117,430 @@ def frontend():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
+
+# ── ADJUNTOS ──────────────────────────────────────────────────────────────────
+
+from fastapi import UploadFile, File
+from fastapi.responses import Response
+
+@app.post("/api/tickets/{ticket_id}/adjunto")
+async def subir_adjunto(ticket_id: int, archivo: UploadFile = File(...)):
+    MAX_MB = 5
+    data = await archivo.read()
+    if len(data) > MAX_MB * 1024 * 1024:
+        raise HTTPException(413, f"El archivo supera {MAX_MB}MB")
+    allowed = {"image/jpeg","image/png","image/gif","image/webp","application/pdf"}
+    mime = archivo.content_type or "application/octet-stream"
+    if mime not in allowed:
+        raise HTTPException(415, "Solo se permiten imágenes (JPG, PNG) o PDF")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id FROM tickets WHERE id={PH}", (ticket_id,))
+        if not _row(cur):
+            raise HTTPException(404, "Ticket no encontrado")
+        if USE_PG:
+            import psycopg2
+            cur.execute(
+                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (%s,%s,%s,%s) RETURNING id",
+                (ticket_id, archivo.filename, mime, psycopg2.Binary(data))
+            )
+            new_id = cur.fetchone()[0]
+        else:
+            cur.execute(
+                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (?,?,?,?)",
+                (ticket_id, archivo.filename, mime, data)
+            )
+            new_id = cur.lastrowid
+    return {"id": new_id, "nombre": archivo.filename, "mime_type": mime, "size": len(data)}
+
+@app.get("/api/tickets/{ticket_id}/adjuntos")
+def listar_adjuntos(ticket_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id,nombre_archivo,mime_type,subido_en FROM adjuntos WHERE ticket_id={PH} ORDER BY subido_en", (ticket_id,))
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("subido_en") and not isinstance(r["subido_en"], str):
+                r["subido_en"] = r["subido_en"].isoformat()
+        return rows
+
+@app.get("/api/adjuntos/{adjunto_id}")
+def descargar_adjunto(adjunto_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM adjuntos WHERE id={PH}", (adjunto_id,))
+        row = _row(cur)
+        if not row:
+            raise HTTPException(404, "Adjunto no encontrado")
+    data = bytes(row["datos"]) if not isinstance(row["datos"], bytes) else row["datos"]
+    return Response(content=data, media_type=row["mime_type"],
+                    headers={"Content-Disposition": f'inline; filename="{row["nombre_archivo"]}"'})
+
+@app.delete("/api/adjuntos/{adjunto_id}")
+def eliminar_adjunto(adjunto_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM adjuntos WHERE id={PH}", (adjunto_id,))
+    return {"mensaje": "Adjunto eliminado"}
+
+# ── HISTORIAL ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/tickets/{ticket_id}/historial")
+def obtener_historial(ticket_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM historial WHERE ticket_id={PH} ORDER BY fecha DESC", (ticket_id,))
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("fecha") and not isinstance(r["fecha"], str):
+                r["fecha"] = r["fecha"].isoformat()
+        return rows
+
+def _registrar_historial(conn, ticket_id, campo, anterior, nuevo, usuario=None):
+    cur = conn.cursor()
+    if USE_PG:
+        cur.execute(
+            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (%s,%s,%s,%s,%s)",
+            (ticket_id, campo, str(anterior) if anterior is not None else None,
+             str(nuevo) if nuevo is not None else None, usuario)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (?,?,?,?,?)",
+            (ticket_id, campo, str(anterior) if anterior is not None else None,
+             str(nuevo) if nuevo is not None else None, usuario)
+        )
+
+# ── CIERRE DE PERÍODO ─────────────────────────────────────────────────────────
+
+@app.get("/api/periodos_cierre")
+def listar_cierres():
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM periodos_cierre ORDER BY anio DESC, mes DESC")
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("cerrado_en") and not isinstance(r["cerrado_en"], str):
+                r["cerrado_en"] = r["cerrado_en"].isoformat()
+        return rows
+
+@app.post("/api/periodos_cierre")
+def cerrar_periodo(anio: int, mes: int, usuario: Optional[str] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Verificar que no haya tickets pendientes
+        cur.execute(f"""SELECT COUNT(*) as n FROM tickets
+                    WHERE estado='pendiente' AND {_year_filter('fecha_gasto')} AND {_month_filter('fecha_gasto')}""",
+                    (_yp(anio), _mp(mes)))
+        row = _row(cur)
+        pendientes = row["n"] if row else 0
+        if pendientes > 0:
+            raise HTTPException(409, f"Hay {pendientes} ticket(s) pendientes de revisión. Revisalos antes de cerrar el período.")
+        if USE_PG:
+            cur.execute("""
+                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
+                VALUES (%s,%s,1,%s,CURRENT_TIMESTAMP)
+                ON CONFLICT (anio,mes) DO UPDATE SET cerrado=1, cerrado_por=EXCLUDED.cerrado_por, cerrado_en=CURRENT_TIMESTAMP
+            """, (anio, mes, usuario))
+        else:
+            cur.execute("""
+                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
+                VALUES (?,?,1,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(anio,mes) DO UPDATE SET cerrado=1, cerrado_por=excluded.cerrado_por, cerrado_en=CURRENT_TIMESTAMP
+            """, (anio, mes, usuario))
+    return {"mensaje": f"Período {mes}/{anio} cerrado correctamente"}
+
+@app.post("/api/periodos_cierre/reabrir")
+def reabrir_periodo(anio: int, mes: int, usuario: Optional[str] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE periodos_cierre SET cerrado=0, cerrado_por={PH}, cerrado_en=CURRENT_TIMESTAMP WHERE anio={PH} AND mes={PH}",
+                    (usuario, anio, mes))
+    return {"mensaje": f"Período {mes}/{anio} reabierto"}
+
+@app.get("/api/periodos_cierre/estado")
+def estado_periodo(anio: int, mes: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM periodos_cierre WHERE anio={PH} AND mes={PH}", (anio, mes))
+        row = _row(cur)
+        return {"cerrado": bool(row and row.get("cerrado")), "detalle": row}
+
+# ── REPORTES ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/reportes/por_categoria")
+def reporte_por_categoria(anio: Optional[int] = None, mes: Optional[int] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = """SELECT c.nombre as categoria,
+                      COUNT(*) as cantidad,
+                      SUM(t.valor) as total_presentado,
+                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                      COUNT(CASE WHEN t.estado='aprobado' THEN 1 END) as cant_aprobados,
+                      COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as cant_rechazados
+               FROM tickets t
+               LEFT JOIN categorias c ON t.categoria_id = c.id
+               WHERE 1=1"""
+        params = []
+        if anio:
+            q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
+        if mes:
+            q += f" AND {_month_filter('t.fecha_gasto')}"; params.append(_mp(mes))
+        q += " GROUP BY c.nombre ORDER BY total_aprobado DESC"
+        cur.execute(q, params)
+        return _rows(cur)
+
+@app.get("/api/reportes/mensual_anual")
+def reporte_mensual_anual(anio: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_PG:
+            cur.execute("""
+                SELECT EXTRACT(MONTH FROM fecha_gasto)::int as mes,
+                       COUNT(*) as cantidad,
+                       SUM(valor) as total_presentado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
+                FROM tickets WHERE EXTRACT(YEAR FROM fecha_gasto) = %s
+                GROUP BY mes ORDER BY mes
+            """, (anio,))
+        else:
+            cur.execute("""
+                SELECT CAST(strftime('%m', fecha_gasto) AS INTEGER) as mes,
+                       COUNT(*) as cantidad,
+                       SUM(valor) as total_presentado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
+                FROM tickets WHERE strftime('%Y', fecha_gasto) = ?
+                GROUP BY mes ORDER BY mes
+            """, (str(anio),))
+        return _rows(cur)
+
+@app.get("/api/reportes/por_agente_anual")
+def reporte_por_agente_anual(anio: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT a.nombre,
+                   COUNT(t.id) as total_tickets,
+                   SUM(t.valor) as total_presentado,
+                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                   COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as rechazados,
+                   COUNT(CASE WHEN t.estado='pendiente' THEN 1 END) as pendientes
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id = t.agente_id AND {_year_filter('t.fecha_gasto')}
+            WHERE a.activo = 1
+            GROUP BY a.id, a.nombre ORDER BY total_aprobado DESC NULLS LAST
+        """, (_yp(anio),))
+        return _rows(cur)
+
+# ── ADJUNTOS ──────────────────────────────────────────────────────────────────
+
+from fastapi import UploadFile, File
+from fastapi.responses import Response
+
+@app.post("/api/tickets/{ticket_id}/adjunto")
+async def subir_adjunto(ticket_id: int, archivo: UploadFile = File(...)):
+    MAX_MB = 5
+    data = await archivo.read()
+    if len(data) > MAX_MB * 1024 * 1024:
+        raise HTTPException(413, f"El archivo supera {MAX_MB}MB")
+    allowed = {"image/jpeg","image/png","image/gif","image/webp","application/pdf"}
+    mime = archivo.content_type or "application/octet-stream"
+    if mime not in allowed:
+        raise HTTPException(415, "Solo se permiten imagenes (JPG, PNG) o PDF")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id FROM tickets WHERE id={PH}", (ticket_id,))
+        if not _row(cur):
+            raise HTTPException(404, "Ticket no encontrado")
+        if USE_PG:
+            import psycopg2
+            cur.execute(
+                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (%s,%s,%s,%s) RETURNING id",
+                (ticket_id, archivo.filename, mime, psycopg2.Binary(data))
+            )
+            new_id = cur.fetchone()[0]
+        else:
+            cur.execute(
+                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (?,?,?,?)",
+                (ticket_id, archivo.filename, mime, data)
+            )
+            new_id = cur.lastrowid
+    return {"id": new_id, "nombre": archivo.filename, "mime_type": mime, "size": len(data)}
+
+@app.get("/api/tickets/{ticket_id}/adjuntos")
+def listar_adjuntos(ticket_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id,nombre_archivo,mime_type,subido_en FROM adjuntos WHERE ticket_id={PH} ORDER BY subido_en", (ticket_id,))
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("subido_en") and not isinstance(r["subido_en"], str):
+                r["subido_en"] = r["subido_en"].isoformat()
+        return rows
+
+@app.get("/api/adjuntos/{adjunto_id}")
+def descargar_adjunto(adjunto_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM adjuntos WHERE id={PH}", (adjunto_id,))
+        row = _row(cur)
+        if not row:
+            raise HTTPException(404, "Adjunto no encontrado")
+    data = bytes(row["datos"]) if not isinstance(row["datos"], bytes) else row["datos"]
+    return Response(content=data, media_type=row["mime_type"],
+                    headers={"Content-Disposition": f'inline; filename="{row["nombre_archivo"]}"'})
+
+@app.delete("/api/adjuntos/{adjunto_id}")
+def eliminar_adjunto(adjunto_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM adjuntos WHERE id={PH}", (adjunto_id,))
+    return {"mensaje": "Adjunto eliminado"}
+
+# ── HISTORIAL ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/tickets/{ticket_id}/historial")
+def obtener_historial(ticket_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM historial WHERE ticket_id={PH} ORDER BY fecha DESC", (ticket_id,))
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("fecha") and not isinstance(r["fecha"], str):
+                r["fecha"] = r["fecha"].isoformat()
+        return rows
+
+def _registrar_historial(conn, ticket_id, campo, anterior, nuevo, usuario=None):
+    cur = conn.cursor()
+    if USE_PG:
+        cur.execute(
+            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (%s,%s,%s,%s,%s)",
+            (ticket_id, campo, str(anterior) if anterior is not None else None,
+             str(nuevo) if nuevo is not None else None, usuario)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (?,?,?,?,?)",
+            (ticket_id, campo, str(anterior) if anterior is not None else None,
+             str(nuevo) if nuevo is not None else None, usuario)
+        )
+
+# ── CIERRE DE PERIODO ─────────────────────────────────────────────────────────
+
+@app.get("/api/periodos_cierre/estado")
+def estado_periodo(anio: int, mes: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM periodos_cierre WHERE anio={PH} AND mes={PH}", (anio, mes))
+        row = _row(cur)
+        return {"cerrado": bool(row and row.get("cerrado")), "detalle": row}
+
+@app.get("/api/periodos_cierre")
+def listar_cierres():
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM periodos_cierre ORDER BY anio DESC, mes DESC")
+        rows = _rows(cur)
+        for r in rows:
+            if r.get("cerrado_en") and not isinstance(r["cerrado_en"], str):
+                r["cerrado_en"] = r["cerrado_en"].isoformat()
+        return rows
+
+@app.post("/api/periodos_cierre")
+def cerrar_periodo(anio: int, mes: int, usuario: Optional[str] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""SELECT COUNT(*) as n FROM tickets
+                    WHERE estado='pendiente' AND {_year_filter('fecha_gasto')} AND {_month_filter('fecha_gasto')}""",
+                    (_yp(anio), _mp(mes)))
+        row = _row(cur)
+        pendientes = row["n"] if row else 0
+        if pendientes > 0:
+            raise HTTPException(409, f"Hay {pendientes} ticket(s) pendientes de revision. Revisalos antes de cerrar el periodo.")
+        if USE_PG:
+            cur.execute("""
+                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
+                VALUES (%s,%s,1,%s,CURRENT_TIMESTAMP)
+                ON CONFLICT (anio,mes) DO UPDATE SET cerrado=1,cerrado_por=EXCLUDED.cerrado_por,cerrado_en=CURRENT_TIMESTAMP
+            """, (anio, mes, usuario))
+        else:
+            cur.execute("""
+                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
+                VALUES (?,?,1,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(anio,mes) DO UPDATE SET cerrado=1,cerrado_por=excluded.cerrado_por,cerrado_en=CURRENT_TIMESTAMP
+            """, (anio, mes, usuario))
+    return {"mensaje": f"Periodo {mes}/{anio} cerrado correctamente"}
+
+@app.post("/api/periodos_cierre/reabrir")
+def reabrir_periodo(anio: int, mes: int, usuario: Optional[str] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE periodos_cierre SET cerrado=0,cerrado_por={PH},cerrado_en=CURRENT_TIMESTAMP WHERE anio={PH} AND mes={PH}",
+                    (usuario, anio, mes))
+    return {"mensaje": f"Periodo {mes}/{anio} reabierto"}
+
+# ── REPORTES ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/reportes/por_categoria")
+def reporte_por_categoria(anio: Optional[int] = None, mes: Optional[int] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = """SELECT COALESCE(c.nombre,'Sin categoria') as categoria,
+                      COUNT(*) as cantidad,
+                      SUM(t.valor) as total_presentado,
+                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                      COUNT(CASE WHEN t.estado='aprobado' THEN 1 END) as cant_aprobados,
+                      COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as cant_rechazados
+               FROM tickets t LEFT JOIN categorias c ON t.categoria_id = c.id WHERE 1=1"""
+        params = []
+        if anio:
+            q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
+        if mes:
+            q += f" AND {_month_filter('t.fecha_gasto')}"; params.append(_mp(mes))
+        q += " GROUP BY c.nombre ORDER BY total_aprobado DESC"
+        cur.execute(q, params)
+        return _rows(cur)
+
+@app.get("/api/reportes/mensual_anual")
+def reporte_mensual_anual(anio: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_PG:
+            cur.execute("""
+                SELECT EXTRACT(MONTH FROM fecha_gasto)::int as mes,
+                       COUNT(*) as cantidad, SUM(valor) as total_presentado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
+                FROM tickets WHERE EXTRACT(YEAR FROM fecha_gasto)=%s
+                GROUP BY mes ORDER BY mes
+            """, (anio,))
+        else:
+            cur.execute("""
+                SELECT CAST(strftime('%m',fecha_gasto) AS INTEGER) as mes,
+                       COUNT(*) as cantidad, SUM(valor) as total_presentado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
+                FROM tickets WHERE strftime('%Y',fecha_gasto)=?
+                GROUP BY mes ORDER BY mes
+            """, (str(anio),))
+        return _rows(cur)
+
+@app.get("/api/reportes/por_agente_anual")
+def reporte_por_agente_anual(anio: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT a.nombre,
+                   COUNT(t.id) as total_tickets,
+                   SUM(COALESCE(t.valor,0)) as total_presentado,
+                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN COALESCE(t.valor_aprobado,0) ELSE 0 END) as total_aprobado,
+                   COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as rechazados,
+                   COUNT(CASE WHEN t.estado='pendiente' THEN 1 END) as pendientes
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id=t.agente_id AND {_year_filter('t.fecha_gasto')}
+            WHERE a.activo=1
+            GROUP BY a.id, a.nombre ORDER BY total_aprobado DESC
+        """, (_yp(anio),))
+        return _rows(cur)
