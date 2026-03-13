@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Viáticos ATE</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #1a3a5c;
+  --blue: #2d6a9f;
+  --sky: #4a9fd4;
+  --ice: #EBF3FB;
+  --ice2: #d6e9f8;
+  --white: #ffffff;
+  --gray50: #f8fafc;
+  --gray100: #f1f5f9;
+  --gray200: #e2e8f0;
+  --gray300: #cbd5e1;
+  --gray500: #64748b;
+  --gray700: #334155;
+  --gray900: #0f172a;
+  --green: #16a34a;
+  --green-bg: #dcfce7;
+  --red: #dc2626;
+  --red-bg: #fee2e2;
+  --yellow: #d97706;
+  --yellow-bg: #fef3c7;
+  --orange: #ea580c;
+  --orange-bg: #ffedd5;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+  --shadow: 0 4px 16px rgba(0,0,0,.10);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,.14);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--gray50);
+  color: var(--gray900);
+  min-height: 100vh;
+  font-size: 14px;
+}
+
+/* ── LAYOUT ── */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 240px;
+  background: var(--navy);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-logo {
+  padding: 24px 20px 20px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+
+.sidebar-logo .org {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--sky);
+  margin-bottom: 4px;
+}
+
+.sidebar-logo .app-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.2;
+}
+
+.sidebar-logo .app-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,.45);
+  margin-top: 3px;
+}
+
+.sidebar-nav { padding: 16px 12px; flex: 1; }
+
+.nav-section {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.35);
+  padding: 12px 8px 6px;
+  margin-top: 8px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  color: rgba(255,255,255,.7);
+  cursor: pointer;
+  transition: all .15s;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.nav-item:hover { background: rgba(255,255,255,.08); color: var(--white); }
+.nav-item.active { background: rgba(74,159,212,.2); color: var(--sky); }
+.nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+
+.sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid rgba(255,255,255,.1);
+  font-size: 11px;
+  color: rgba(255,255,255,.3);
+  text-align: center;
+}
+
+.main { margin-left: 240px; flex: 1; display: flex; flex-direction: column; }
+
+.topbar {
+  background: var(--white);
+  border-bottom: 1px solid var(--gray200);
+  padding: 0 32px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-title { font-size: 16px; font-weight: 600; color: var(--gray900); }
+.topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+.content { padding: 28px 32px; flex: 1; }
+
+/* ── PERIOD SELECTOR ── */
+.period-bar {
+  background: var(--white);
+  border: 1px solid var(--gray200);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.period-label { font-size: 12px; font-weight: 600; color: var(--gray500); text-transform: uppercase; letter-spacing: .06em; }
+
+.period-select {
+  padding: 7px 12px;
+  border: 1.5px solid var(--gray200);
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gray900);
+  background: var(--gray50);
+  cursor: pointer;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.period-select:focus { border-color: var(--sky); }
+
+/* ── STATS GRID ── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--white);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid var(--gray200);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--gray500); margin-bottom: 8px; }
+.stat-card .value { font-size: 26px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+.stat-card .sub { font-size: 12px; color: var(--gray500); margin-top: 4px; }
+.stat-card.green .value { color: var(--green); }
+.stat-card.red .value { color: var(--red); }
+.stat-card.yellow .value { color: var(--yellow); }
+
+/* ── CARDS & TABLES ── */
+.card {
+  background: var(--white);
+  border-radius: var(--radius);
+  border: 1px solid var(--gray200);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--gray100);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title { font-size: 14px; font-weight: 600; color: var(--gray900); }
+.card-body { padding: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  background: var(--gray50);
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--gray500);
+  border-bottom: 1px solid var(--gray200);
+  white-space: nowrap;
+}
+
+tbody tr {
+  border-bottom: 1px solid var(--gray100);
+  transition: background .1s;
+}
+
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--gray50); }
+
+tbody td {
+  padding: 11px 16px;
+  font-size: 13.5px;
+  color: var(--gray700);
+  vertical-align: middle;
+}
+
+.td-amount {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.td-name { font-weight: 600; color: var(--gray900); }
+
+/* ── BADGES ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.badge-pendiente { background: var(--yellow-bg); color: var(--yellow); }
+.badge-aprobado { background: var(--green-bg); color: var(--green); }
+.badge-rechazado { background: var(--red-bg); color: var(--red); }
+.badge-debito { background: var(--orange-bg); color: var(--orange); }
+
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all .15s;
+  text-decoration: none;
+}
+
+.btn-primary { background: var(--blue); color: var(--white); }
+.btn-primary:hover { background: var(--navy); }
+.btn-outline { background: transparent; color: var(--blue); border: 1.5px solid var(--blue); }
+.btn-outline:hover { background: var(--ice); }
+.btn-ghost { background: transparent; color: var(--gray700); border: 1.5px solid var(--gray200); }
+.btn-ghost:hover { background: var(--gray100); }
+.btn-danger { background: var(--red); color: white; }
+.btn-danger:hover { opacity: .85; }
+.btn-green { background: var(--green); color: white; }
+.btn-green:hover { opacity: .85; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-icon { padding: 6px 8px; }
+
+/* ── FORMS ── */
+.form-grid { display: grid; gap: 16px; }
+.form-grid-2 { grid-template-columns: 1fr 1fr; }
+.form-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 12px; font-weight: 600; color: var(--gray700); }
+
+.input, .select, textarea {
+  padding: 9px 12px;
+  border: 1.5px solid var(--gray200);
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--gray900);
+  background: var(--white);
+  outline: none;
+  transition: border-color .15s;
+  width: 100%;
+}
+
+.input:focus, .select:focus, textarea:focus { border-color: var(--sky); }
+.input-money { font-family: 'DM Mono', monospace; }
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,23,42,.5);
+  backdrop-filter: blur(3px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn .15s;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+.modal {
+  background: var(--white);
+  border-radius: 16px;
+  width: 560px;
+  max-width: 94vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp .2s;
+}
+
+.modal-header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--gray100);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-title { font-size: 16px; font-weight: 700; }
+.modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--gray500); padding: 0 4px; line-height: 1; }
+.modal-close:hover { color: var(--gray900); }
+.modal-body { padding: 24px; }
+.modal-footer { padding: 16px 24px; border-top: 1px solid var(--gray100); display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ── TABS ── */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.tab {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--gray500);
+  transition: all .15s;
+  border: none;
+  background: none;
+}
+
+.tab:hover { color: var(--gray900); background: var(--gray100); }
+.tab.active { background: var(--navy); color: var(--white); }
+
+/* ── TOAST ── */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  background: var(--gray900);
+  color: white;
+  padding: 12px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp .2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.toast.success { background: #15803d; }
+.toast.error { background: var(--red); }
+.toast.warning { background: var(--yellow); color: var(--gray900); }
+
+/* ── EMPTY STATE ── */
+.empty-state {
+  text-align: center;
+  padding: 56px 32px;
+  color: var(--gray500);
+}
+
+.empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
+.empty-state p { font-size: 15px; font-weight: 500; }
+.empty-state small { font-size: 13px; color: var(--gray300); }
+
+/* ── AGENTE CARD (resumen) ── */
+.agente-row-total {
+  background: linear-gradient(90deg, var(--navy) 0%, var(--blue) 100%);
+  color: white;
+}
+
+.agente-row-total td { color: white !important; font-weight: 700; }
+
+.tope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--ice2);
+  color: var(--navy);
+}
+
+.progress-bar-wrap { width: 80px; height: 6px; background: var(--gray200); border-radius: 3px; display: inline-block; vertical-align: middle; margin-left: 6px; }
+.progress-bar-fill { height: 100%; border-radius: 3px; background: var(--sky); }
+
+/* ── FILTERS ── */
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.filter-chip {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid var(--gray200);
+  background: var(--white);
+  color: var(--gray500);
+  transition: all .15s;
+}
+
+.filter-chip:hover { border-color: var(--sky); color: var(--sky); }
+.filter-chip.active { background: var(--navy); color: white; border-color: var(--navy); }
+
+.search-input {
+  padding: 6px 12px;
+  border: 1.5px solid var(--gray200);
+  border-radius: 20px;
+  font-size: 13px;
+  outline: none;
+  width: 200px;
+  transition: border-color .15s;
+}
+
+.search-input:focus { border-color: var(--sky); }
+
+/* ── INLINE EDIT ── */
+.tope-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tope-value {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background .15s;
+}
+
+.tope-value:hover { background: var(--ice); }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-grid-3 { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="org">Sindicato ATE</div>
+      <div class="app-name">Viáticos</div>
+      <div class="app-sub">Sistema de Reintegros</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Principal</div>
+      <button class="nav-item active" onclick="navigate('dashboard')">
+        <span class="icon">📊</span> Panel de Control
+      </button>
+      <button class="nav-item" onclick="navigate('tickets')">
+        <span class="icon">🧾</span> Tickets
+      </button>
+      <div class="nav-section">Gestión</div>
+      <button class="nav-item" onclick="navigate('agentes')">
+        <span class="icon">👥</span> Agentes
+      </button>
+      <button class="nav-item" onclick="navigate('topes')">
+        <span class="icon">🎯</span> Topes Mensuales
+      </button>
+      <div class="nav-section">Reportes</div>
+      <button class="nav-item" onclick="navigate('exportar')">
+        <span class="icon">📥</span> Exportar
+      </button>
+    </nav>
+    <div class="sidebar-footer">ATE Viáticos v1.0</div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <header class="topbar">
+      <span class="topbar-title" id="topbar-title">Panel de Control</span>
+      <div class="topbar-actions" id="topbar-actions"></div>
+    </header>
+
+    <div class="content" id="content">
+      <!-- Dynamic content -->
+    </div>
+  </main>
+</div>
+
+<!-- MODALS -->
+<div id="modal-container"></div>
+<div id="toast-container"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════
+const state = {
+  page: 'dashboard',
+  anio: new Date().getFullYear(),
+  mes: new Date().getMonth() + 1,
+  agentes: [],
+  categorias: [],
+  tickets: [],
+  resumen: [],
+  ticketFilter: 'todos',
+  ticketSearch: ''
+};
+
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// ══════════════════════════════════════════════════════════
+//  API
+// ══════════════════════════════════════════════════════════
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch('/api' + path, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Error en la solicitud');
+  }
+  return res.json();
+}
+
+async function loadAll() {
+  [state.agentes, state.categorias] = await Promise.all([
+    api('GET', '/agentes'),
+    api('GET', '/categorias')
+  ]);
+}
+
+async function loadResumen() {
+  state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+}
+
+async function loadTickets() {
+  let url = `/tickets?anio=${state.anio}&mes=${state.mes}`;
+  state.tickets = await api('GET', url);
+}
+
+// ══════════════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════════════
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : '⚠';
+  el.innerHTML = `<span>${icon}</span> ${msg}`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ══════════════════════════════════════════════════════════
+//  NAVIGATION
+// ══════════════════════════════════════════════════════════
+async function navigate(page) {
+  state.page = page;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  const navMap = { dashboard: 0, tickets: 1, agentes: 3, topes: 4, exportar: 6 };
+  document.querySelectorAll('.nav-item')[navMap[page]]?.classList.add('active');
+
+  const titles = {
+    dashboard: 'Panel de Control',
+    tickets: 'Tickets de Viáticos',
+    agentes: 'Gestión de Agentes',
+    topes: 'Topes Mensuales',
+    exportar: 'Exportar Reportes'
+  };
+
+  document.getElementById('topbar-title').textContent = titles[page] || page;
+  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('content').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b">Cargando...</div>';
+
+  await loadAll();
+
+  if (page === 'dashboard') await renderDashboard();
+  else if (page === 'tickets') await renderTickets();
+  else if (page === 'agentes') renderAgentes();
+  else if (page === 'topes') await renderTopes();
+  else if (page === 'exportar') renderExportar();
+}
+
+// ══════════════════════════════════════════════════════════
+//  PERIOD BAR
+// ══════════════════════════════════════════════════════════
+function periodBar() {
+  const years = [2023, 2024, 2025, 2026];
+  return `
+  <div class="period-bar">
+    <span class="period-label">Período</span>
+    <select class="period-select" onchange="changePeriod(this.value, null)">
+      ${MESES.map((m, i) => `<option value="${i+1}" ${state.mes === i+1 ? 'selected' : ''}>${m}</option>`).join('')}
+    </select>
+    <select class="period-select" onchange="changePeriod(null, this.value)">
+      ${years.map(y => `<option value="${y}" ${state.anio === y ? 'selected' : ''}>${y}</option>`).join('')}
+    </select>
+    <span style="margin-left:4px;font-size:13px;font-weight:600;color:#2d6a9f">${MESES[state.mes-1]} ${state.anio}</span>
+  </div>`;
+}
+
+async function changePeriod(mes, anio) {
+  if (mes) state.mes = parseInt(mes);
+  if (anio) state.anio = parseInt(anio);
+  await navigate(state.page);
+}
+
+// ══════════════════════════════════════════════════════════
+//  DASHBOARD
+// ══════════════════════════════════════════════════════════
+async function renderDashboard() {
+  await Promise.all([loadResumen(), loadTickets()]);
+
+  const totalPendiente = state.tickets.filter(t => t.estado === 'pendiente').reduce((s, t) => s + t.valor, 0);
+  const totalAprobado = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito), 0);
+  const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
+  const totalRechazado = state.resumen.reduce((s, a) => s + a.total_rechazado, 0);
+  const cantPendientes = state.tickets.filter(t => t.estado === 'pendiente').length;
+  const cantAgentes = state.resumen.filter(a => a.cant_aprobados > 0 || a.cant_pendientes > 0).length;
+
+  // Topbar action
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
+
+  document.getElementById('content').innerHTML = `
+    ${periodBar()}
+
+    <div class="stats-grid">
+      <div class="stat-card yellow">
+        <div class="label">Pendiente Revisión</div>
+        <div class="value">${cantPendientes}</div>
+        <div class="sub">${fmt(totalPendiente)} en tickets</div>
+      </div>
+      <div class="stat-card green">
+        <div class="label">Total Aprobado</div>
+        <div class="value">${fmt(totalAprobado)}</div>
+        <div class="sub">${state.resumen.reduce((s,a) => s + a.cant_aprobados, 0)} tickets aprobados</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">A Transferir</div>
+        <div class="value" style="color:var(--navy)">${fmt(totalTransferir)}</div>
+        <div class="sub">${cantAgentes} agentes</div>
+      </div>
+      <div class="stat-card red">
+        <div class="label">Total Rechazado</div>
+        <div class="value">${fmt(totalRechazado)}</div>
+        <div class="sub">Débitos aplicados</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header">
+        <span class="card-title">Resumen por Agente — ${MESES[state.mes-1]} ${state.anio}</span>
+        <button class="btn btn-ghost btn-sm" onclick="navigate('exportar')">📥 Exportar</button>
+      </div>
+      <div class="card-body">
+        ${state.resumen.length === 0 ? '<div class="empty-state"><div class="emoji">📋</div><p>Sin datos para este período</p></div>' : `
+        <table>
+          <thead>
+            <tr>
+              <th>Agente</th>
+              <th>Pendiente</th>
+              <th>Aprobado</th>
+              <th>Tope</th>
+              <th>A Transferir</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.resumen.map(a => {
+              const aprobado = a.total_aprobado + a.total_debito;
+              const pct = a.tope_efectivo > 0 ? Math.min(100, (aprobado / a.tope_efectivo) * 100) : 0;
+              return `
+              <tr>
+                <td class="td-name">${a.nombre}</td>
+                <td><span class="badge badge-pendiente">${a.cant_pendientes} tickets</span></td>
+                <td class="td-amount">${fmt(aprobado)}</td>
+                <td>
+                  <span class="tope-badge">🎯 ${a.tope_efectivo > 0 ? fmt(a.tope_efectivo) : 'Sin tope'}</span>
+                  ${a.tope_efectivo > 0 ? `<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>` : ''}
+                </td>
+                <td class="td-amount" style="font-weight:700;color:var(--navy)">${fmt(a.a_transferir)}</td>
+                <td>
+                  <button class="btn btn-ghost btn-sm" onclick="verTicketsAgente(${a.id})">Ver tickets</button>
+                </td>
+              </tr>`
+            }).join('')}
+            <tr class="agente-row-total">
+              <td>TOTAL</td>
+              <td></td>
+              <td class="td-amount">${fmt(state.resumen.reduce((s,a)=>s+(a.total_aprobado+a.total_debito),0))}</td>
+              <td></td>
+              <td class="td-amount">${fmt(totalTransferir)}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>`}
+      </div>
+    </div>
+
+    ${cantPendientes > 0 ? `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">⏳ Tickets Pendientes de Revisión</span>
+        <span class="badge badge-pendiente">${cantPendientes}</span>
+      </div>
+      <div class="card-body">
+        <table>
+          <thead>
+            <tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Valor</th><th>Acciones</th></tr>
+          </thead>
+          <tbody>
+            ${state.tickets.filter(t => t.estado === 'pendiente').map(t => `
+            <tr>
+              <td class="td-name">${t.agente_nombre}</td>
+              <td>${formatDate(t.fecha_gasto)}</td>
+              <td><span class="badge" style="background:var(--ice2);color:var(--navy)">${t.categoria_nombre || '-'}</span></td>
+              <td>${t.descripcion || '-'}</td>
+              <td class="td-amount">${fmt(t.valor)}</td>
+              <td>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-green btn-sm" onclick="revisarTicket(${t.id}, 'rapido_aprobado')">✓ Aprobar</button>
+                  <button class="btn btn-ghost btn-sm" onclick="revisarTicket(${t.id}, 'modal')">⋯ Revisar</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+// ══════════════════════════════════════════════════════════
+//  TICKETS
+// ══════════════════════════════════════════════════════════
+async function renderTickets() {
+  await loadTickets();
+
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
+
+  const filtered = filterTickets();
+
+  document.getElementById('content').innerHTML = `
+    ${periodBar()}
+
+    <div class="filters">
+      ${['todos','pendiente','aprobado','debito_parcial','rechazado'].map(f => `
+        <button class="filter-chip ${state.ticketFilter === f ? 'active' : ''}"
+          onclick="setTicketFilter('${f}')">
+          ${f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito parcial' : cap(f)}
+          ${f !== 'todos' ? `(${state.tickets.filter(t => t.estado === f).length})` : `(${state.tickets.length})`}
+        </button>`).join('')}
+      <input class="search-input" placeholder="🔍 Buscar agente..." value="${state.ticketSearch}"
+        oninput="state.ticketSearch=this.value;renderTicketsTable()">
+    </div>
+
+    <div class="card" id="tickets-card">
+      <div class="card-body">
+        <div id="tickets-table-body">${renderTicketsTableHTML(filtered)}</div>
+      </div>
+    </div>`;
+}
+
+function filterTickets() {
+  return state.tickets.filter(t => {
+    const matchFilter = state.ticketFilter === 'todos' || t.estado === state.ticketFilter;
+    const matchSearch = !state.ticketSearch || t.agente_nombre.toLowerCase().includes(state.ticketSearch.toLowerCase());
+    return matchFilter && matchSearch;
+  });
+}
+
+function setTicketFilter(f) {
+  state.ticketFilter = f;
+  document.querySelectorAll('.filter-chip').forEach((el, i) => {
+    el.classList.toggle('active', el.textContent.trim().startsWith(
+      f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito' : cap(f)
+    ));
+  });
+  renderTicketsTable();
+}
+
+function renderTicketsTable() {
+  document.getElementById('tickets-table-body').innerHTML = renderTicketsTableHTML(filterTickets());
+}
+
+function renderTicketsTableHTML(tickets) {
+  if (!tickets.length) return '<div class="empty-state"><div class="emoji">🔍</div><p>Sin tickets</p><small>Ajustar filtros o agregar nuevos tickets</small></div>';
+  return `<table>
+    <thead>
+      <tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Comprobante</th><th>Descripción</th><th>Valor</th><th>Aprobado</th><th>Estado</th><th></th></tr>
+    </thead>
+    <tbody>
+      ${tickets.map(t => `
+      <tr>
+        <td class="td-name">${t.agente_nombre}</td>
+        <td>${formatDate(t.fecha_gasto)}</td>
+        <td><span class="badge" style="background:var(--ice2);color:var(--navy);font-size:11px">${t.categoria_nombre||'-'}</span></td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px">${t.comprobante||'-'}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.descripcion||'-'}</td>
+        <td class="td-amount">${fmt(t.valor)}</td>
+        <td class="td-amount">${t.valor_aprobado != null ? fmt(t.valor_aprobado) : '-'}</td>
+        <td>${estadoBadge(t.estado)}</td>
+        <td>
+          <div style="display:flex;gap:4px">
+            ${t.estado === 'pendiente' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revisarTicket(${t.id},'modal')" title="Revisar">⋯</button>` : ''}
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarTicket(${t.id})" title="Eliminar">🗑</button>
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+// ══════════════════════════════════════════════════════════
+//  AGENTES
+// ══════════════════════════════════════════════════════════
+function renderAgentes() {
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="openModalAgente()">+ Nuevo Agente</button>`;
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Agentes Registrados (${state.agentes.length})</span>
+      </div>
+      <div class="card-body" id="agentes-table">
+        ${renderAgentesTableHTML()}
+      </div>
+    </div>`;
+}
+
+function renderAgentesTableHTML() {
+  if (!state.agentes.length) return '<div class="empty-state"><div class="emoji">👥</div><p>Sin agentes registrados</p><small>Agregá el primer agente para comenzar</small></div>';
+  return `<table>
+    <thead>
+      <tr><th>Nombre</th><th>CUIT</th><th>CBU</th><th>Banco / Alias</th><th>Tope Mensual</th><th></th></tr>
+    </thead>
+    <tbody>
+      ${state.agentes.map(a => `
+      <tr>
+        <td class="td-name">${a.nombre}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px">${a.cuit||'-'}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px">${a.cbu||'-'}</td>
+        <td>${a.banco || a.alias || '-'}</td>
+        <td><span class="tope-badge">🎯 ${a.tope_mensual > 0 ? fmt(a.tope_mensual) : 'Sin tope'}</span></td>
+        <td>
+          <button class="btn btn-ghost btn-sm" onclick="openModalAgente(${a.id})">Editar</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+// ══════════════════════════════════════════════════════════
+//  TOPES
+// ══════════════════════════════════════════════════════════
+async function renderTopes() {
+  await loadResumen();
+
+  document.getElementById('content').innerHTML = `
+    ${periodBar()}
+    <div style="background:var(--ice);border:1px solid var(--ice2);border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;font-size:13.5px;color:var(--navy)">
+      💡 Podés sobreescribir el tope mensual por agente para este período sin afectar la configuración general.
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Topes — ${MESES[state.mes-1]} ${state.anio}</span>
+      </div>
+      <div class="card-body">
+        <table>
+          <thead>
+            <tr><th>Agente</th><th>Tope General</th><th>Override Este Mes</th><th>Total Aprobado</th><th>A Transferir</th></tr>
+          </thead>
+          <tbody>
+            ${state.resumen.map(a => `
+            <tr>
+              <td class="td-name">${a.nombre}</td>
+              <td class="td-amount">${fmt(a.tope_mensual)}</td>
+              <td>
+                <div class="tope-inline">
+                  <input type="number" class="input input-money" style="width:130px;padding:5px 8px"
+                    placeholder="${a.tope_efectivo > 0 ? a.tope_efectivo : 'Sin tope'}"
+                    id="tope-${a.id}" step="100">
+                  <button class="btn btn-outline btn-sm" onclick="guardarTope(${a.id})">Guardar</button>
+                  ${a.tope_efectivo !== a.tope_mensual && a.tope_efectivo > 0 ?
+                    `<span style="font-size:11px;color:var(--orange);font-weight:600">Override: ${fmt(a.tope_efectivo)}</span>` : ''}
+                </div>
+              </td>
+              <td class="td-amount">${fmt(a.total_aprobado + a.total_debito)}</td>
+              <td class="td-amount" style="font-weight:700;color:var(--navy)">${fmt(a.a_transferir)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function guardarTope(agenteId) {
+  const val = document.getElementById(`tope-${agenteId}`).value;
+  await api('POST', '/topes', {
+    agente_id: agenteId, anio: state.anio, mes: state.mes,
+    tope_override: val ? parseFloat(val) : null
+  });
+  toast('Tope actualizado');
+  await renderTopes();
+}
+
+// ══════════════════════════════════════════════════════════
+//  EXPORTAR
+// ══════════════════════════════════════════════════════════
+function renderExportar() {
+  document.getElementById('content').innerHTML = `
+    ${periodBar()}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div class="card" style="overflow:visible">
+        <div class="card-header">
+          <span class="card-title">📊 Exportar Excel</span>
+        </div>
+        <div class="card-body" style="padding:20px">
+          <p style="color:var(--gray500);font-size:13.5px;margin-bottom:16px">Incluye 3 hojas: Transferencias, Detalle de Tickets y Resumen Semanal.</p>
+          <a class="btn btn-primary" href="/api/exportar/excel?anio=${state.anio}&mes=${state.mes}" download>
+            ⬇ Descargar Excel (.xlsx)
+          </a>
+        </div>
+      </div>
+
+      <div class="card" style="overflow:visible">
+        <div class="card-header">
+          <span class="card-title">📄 Exportar PDF</span>
+        </div>
+        <div class="card-body" style="padding:20px">
+          <p style="color:var(--gray500);font-size:13.5px;margin-bottom:16px">Resolución formal con totales a transferir por agente.</p>
+          <a class="btn btn-outline" href="/api/exportar/pdf?anio=${state.anio}&mes=${state.mes}" download>
+            ⬇ Descargar PDF
+          </a>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header">
+          <span class="card-title">📅 Resumen del Período</span>
+        </div>
+        <div class="card-body" style="padding:20px" id="export-preview">
+          <div style="color:#64748b;text-align:center;padding:20px">Cargando vista previa...</div>
+        </div>
+      </div>
+    </div>`;
+
+  // Load preview
+  loadResumen().then(() => {
+    const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
+    document.getElementById('export-preview').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+        <div style="text-align:center;padding:16px;background:var(--ice);border-radius:var(--radius-sm)">
+          <div style="font-size:12px;color:var(--gray500);font-weight:600;text-transform:uppercase;margin-bottom:6px">Agentes</div>
+          <div style="font-size:28px;font-weight:700;color:var(--navy)">${state.resumen.filter(a=>a.a_transferir>0).length}</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:var(--ice);border-radius:var(--radius-sm)">
+          <div style="font-size:12px;color:var(--gray500);font-weight:600;text-transform:uppercase;margin-bottom:6px">Tickets Aprobados</div>
+          <div style="font-size:28px;font-weight:700;color:var(--navy)">${state.resumen.reduce((s,a)=>s+a.cant_aprobados,0)}</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:var(--ice);border-radius:var(--radius-sm)">
+          <div style="font-size:12px;color:var(--gray500);font-weight:600;text-transform:uppercase;margin-bottom:6px">Total a Transferir</div>
+          <div style="font-size:28px;font-weight:700;color:var(--navy)">${fmt(totalTransferir)}</div>
+        </div>
+      </div>`;
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+//  MODALS
+// ══════════════════════════════════════════════════════════
+function openModal(html) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">${html}</div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+  document.getElementById('modal-container').appendChild(overlay);
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay')?.remove();
+}
+
+// ── Modal: Nuevo Ticket ──
+function openModalTicket(ticketId) {
+  const agentesOpts = state.agentes.map(a => `<option value="${a.id}">${a.nombre}</option>`).join('');
+  const catsOpts = state.categorias.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+  const hoy = new Date().toISOString().split('T')[0];
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">🧾 Nuevo Ticket de Viático</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="field">
+          <label>Agente *</label>
+          <select class="select" id="t-agente">${agentesOpts}</select>
+        </div>
+        <div class="form-grid form-grid-2">
+          <div class="field">
+            <label>Fecha del Gasto *</label>
+            <input type="date" class="input" id="t-fecha" value="${hoy}">
+          </div>
+          <div class="field">
+            <label>Categoría</label>
+            <select class="select" id="t-cat"><option value="">Sin categoría</option>${catsOpts}</select>
+          </div>
+        </div>
+        <div class="form-grid form-grid-2">
+          <div class="field">
+            <label>Comprobante / N° Factura</label>
+            <input type="text" class="input" id="t-comp" placeholder="Ej: FC-0001-00012345">
+          </div>
+          <div class="field">
+            <label>Valor *</label>
+            <input type="number" class="input input-money" id="t-valor" placeholder="0.00" step="0.01" min="0">
+          </div>
+        </div>
+        <div class="field">
+          <label>Descripción</label>
+          <textarea class="input" id="t-desc" rows="2" placeholder="Detalle del gasto..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarTicket()">Guardar Ticket</button>
+    </div>
+  `);
+}
+
+async function guardarTicket() {
+  const agente_id = parseInt(document.getElementById('t-agente').value);
+  const fecha_gasto = document.getElementById('t-fecha').value;
+  const valor = parseFloat(document.getElementById('t-valor').value);
+
+  if (!fecha_gasto || !valor || valor <= 0) return toast('Completá los campos obligatorios', 'error');
+
+  await api('POST', '/tickets', {
+    agente_id, fecha_gasto, valor,
+    categoria_id: parseInt(document.getElementById('t-cat').value) || null,
+    comprobante: document.getElementById('t-comp').value || null,
+    descripcion: document.getElementById('t-desc').value || null
+  });
+
+  closeModal();
+  toast('Ticket guardado correctamente');
+  await navigate(state.page);
+}
+
+// ── Modal: Revisar Ticket ──
+async function revisarTicket(ticketId, modo) {
+  const ticket = state.tickets.find(t => t.id === ticketId);
+  if (!ticket) return;
+
+  if (modo === 'rapido_aprobado') {
+    await api('PUT', `/tickets/${ticketId}/revision`, { estado: 'aprobado', valor_aprobado: ticket.valor });
+    toast('Ticket aprobado');
+    await navigate(state.page);
+    return;
+  }
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">⚖️ Revisar Ticket #${ticketId}</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--ice);border-radius:var(--radius-sm);padding:14px;margin-bottom:20px;font-size:13.5px">
+        <div style="font-weight:700;color:var(--navy);margin-bottom:6px">${ticket.agente_nombre}</div>
+        <div style="color:var(--gray500)">${formatDate(ticket.fecha_gasto)} · ${ticket.categoria_nombre || 'Sin categoría'} · ${ticket.comprobante || 'Sin comprobante'}</div>
+        ${ticket.descripcion ? `<div style="margin-top:6px;color:var(--gray700)">${ticket.descripcion}</div>` : ''}
+        <div style="font-size:20px;font-weight:700;color:var(--navy);margin-top:8px">${fmt(ticket.valor)}</div>
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label>Decisión *</label>
+          <select class="select" id="r-estado" onchange="toggleRevision(this.value)">
+            <option value="aprobado">✅ Aprobar (monto completo)</option>
+            <option value="debito_parcial">⚠️ Débito parcial (aprobar parcialmente)</option>
+            <option value="rechazado">❌ Rechazar</option>
+          </select>
+        </div>
+
+        <div class="field" id="r-monto-field" style="display:none">
+          <label>Monto Aprobado</label>
+          <input type="number" class="input input-money" id="r-monto" placeholder="0.00" step="0.01" max="${ticket.valor}" value="${ticket.valor}">
+          <small style="color:var(--gray500)">Máximo: ${fmt(ticket.valor)}</small>
+        </div>
+
+        <div class="field" id="r-motivo-field" style="display:none">
+          <label>Motivo del Rechazo / Débito</label>
+          <textarea class="input" id="r-motivo" rows="2" placeholder="Indicar motivo..."></textarea>
+        </div>
+
+        <div class="field">
+          <label>Revisado por</label>
+          <input type="text" class="input" id="r-revisor" placeholder="Nombre del revisor">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarRevision(${ticketId}, ${ticket.valor})">Confirmar</button>
+    </div>
+  `);
+}
+
+function toggleRevision(estado) {
+  document.getElementById('r-monto-field').style.display = estado === 'debito_parcial' ? '' : 'none';
+  document.getElementById('r-motivo-field').style.display = (estado === 'rechazado' || estado === 'debito_parcial') ? '' : 'none';
+}
+
+async function confirmarRevision(ticketId, valorOriginal) {
+  const estado = document.getElementById('r-estado').value;
+  const monto = parseFloat(document.getElementById('r-monto')?.value) || valorOriginal;
+  const motivo = document.getElementById('r-motivo')?.value || null;
+  const revisor = document.getElementById('r-revisor')?.value || null;
+
+  await api('PUT', `/tickets/${ticketId}/revision`, {
+    estado, motivo_rechazo: motivo,
+    valor_aprobado: estado === 'debito_parcial' ? monto : estado === 'aprobado' ? valorOriginal : 0,
+    revisado_por: revisor
+  });
+
+  closeModal();
+  toast(estado === 'aprobado' ? 'Ticket aprobado' : estado === 'rechazado' ? 'Ticket rechazado' : 'Débito parcial aplicado');
+  await navigate(state.page);
+}
+
+// ── Modal: Agente ──
+function openModalAgente(agenteId) {
+  const ag = agenteId ? state.agentes.find(a => a.id === agenteId) : null;
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">${ag ? 'Editar Agente' : '👤 Nuevo Agente'}</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="field">
+          <label>Nombre / Organización *</label>
+          <input type="text" class="input" id="a-nombre" value="${ag?.nombre || ''}" placeholder="Nombre completo o razón social">
+        </div>
+        <div class="form-grid form-grid-2">
+          <div class="field">
+            <label>CUIT</label>
+            <input type="text" class="input" id="a-cuit" value="${ag?.cuit || ''}" placeholder="20-12345678-0">
+          </div>
+          <div class="field">
+            <label>Tope Mensual ($)</label>
+            <input type="number" class="input input-money" id="a-tope" value="${ag?.tope_mensual || 0}" step="100" min="0">
+          </div>
+        </div>
+        <div class="field">
+          <label>CBU</label>
+          <input type="text" class="input" id="a-cbu" value="${ag?.cbu || ''}" placeholder="22 dígitos">
+        </div>
+        <div class="form-grid form-grid-2">
+          <div class="field">
+            <label>Banco</label>
+            <input type="text" class="input" id="a-banco" value="${ag?.banco || ''}" placeholder="Ej: Banco Nación">
+          </div>
+          <div class="field">
+            <label>Alias</label>
+            <input type="text" class="input" id="a-alias" value="${ag?.alias || ''}" placeholder="alias.transferencia">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarAgente(${agenteId || 'null'})">Guardar</button>
+    </div>
+  `);
+}
+
+async function guardarAgente(agenteId) {
+  const data = {
+    nombre: document.getElementById('a-nombre').value,
+    cuit: document.getElementById('a-cuit').value || null,
+    cbu: document.getElementById('a-cbu').value || null,
+    banco: document.getElementById('a-banco').value || null,
+    alias: document.getElementById('a-alias').value || null,
+    tope_mensual: parseFloat(document.getElementById('a-tope').value) || 0
+  };
+
+  if (!data.nombre) return toast('El nombre es obligatorio', 'error');
+
+  if (agenteId) {
+    await api('PUT', `/agentes/${agenteId}`, data);
+    toast('Agente actualizado');
+  } else {
+    await api('POST', '/agentes', data);
+    toast('Agente creado');
+  }
+
+  closeModal();
+  await loadAll();
+  renderAgentes();
+}
+
+async function eliminarTicket(ticketId) {
+  if (!confirm('¿Eliminar este ticket? Esta acción no se puede deshacer.')) return;
+  await api('DELETE', `/tickets/${ticketId}`);
+  toast('Ticket eliminado');
+  await navigate(state.page);
+}
+
+async function verTicketsAgente(agenteId) {
+  state.ticketFilter = 'todos';
+  state.ticketSearch = state.agentes.find(a => a.id === agenteId)?.nombre || '';
+  await navigate('tickets');
+}
+
+// ══════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════
+function fmt(n) {
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2 }).format(n || 0);
+}
+
+function formatDate(str) {
+  if (!str) return '-';
+  const [y, m, d] = str.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function cap(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function estadoBadge(estado) {
+  const map = {
+    pendiente: ['badge-pendiente', '⏳ Pendiente'],
+    aprobado: ['badge-aprobado', '✅ Aprobado'],
+    rechazado: ['badge-rechazado', '❌ Rechazado'],
+    debito_parcial: ['badge-debito', '⚠️ Débito parcial']
+  };
+  const [cls, label] = map[estado] || ['', estado];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+// ══════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════
+navigate('dashboard');
+</script>
+</body>
+</html>
