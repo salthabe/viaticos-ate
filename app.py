@@ -729,7 +729,7 @@ def exportar_excel_custom(
         ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 26
 
-        hdrs = ["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Revisado por"]
+        hdrs = ["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Motivo"]
         for c, h in enumerate(hdrs, 1):
             cell = ws.cell(row=2, column=c, value=h)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -740,7 +740,7 @@ def exportar_excel_custom(
             color = colores.get(t["estado"], "FFFFFF")
             vals = [t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre",""),
                     t.get("comprobante",""), t.get("descripcion",""), t["valor"],
-                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("revisado_por","")]
+                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo","")]
             for c, v in enumerate(vals, 1):
                 cell = ws.cell(row=ri, column=c, value=v)
                 cell.fill = PatternFill("solid", fgColor=color)
@@ -754,7 +754,7 @@ def exportar_excel_custom(
         ws.cell(row=tr, column=8, value=sum(t.get("valor_aprobado") or 0 for t in tickets)).number_format = '"$"#,##0.00'
         ws.cell(row=tr, column=8).font = Font(bold=True)
 
-        for col, w in zip("ABCDEFGHI", [28,12,16,18,32,14,14,14,16]):
+        for col, w in zip("ABCDEFGHI", [28,12,16,18,32,14,14,14,32]):
             ws.column_dimensions[col].width = w
 
     if incluir_transferencias and anio and mes:
@@ -887,12 +887,12 @@ def exportar_excel(anio: int, mes: int):
 
     # Hoja 2: Detalle de Tickets
     ws2 = wb.create_sheet("Detalle de Tickets")
-    ws2.merge_cells("A1:H1")
+    ws2.merge_cells("A1:I1")
     ws2["A1"] = f"DETALLE — {nombre_mes.upper()} {anio}"
     ws2["A1"].font = Font(bold=True, size=12, color="FFFFFF")
     ws2["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
     ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    for c, h in enumerate(["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado"], 1):
+    for c, h in enumerate(["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Motivo"], 1):
         cell = ws2.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="2d6a9f")
 
@@ -901,11 +901,11 @@ def exportar_excel(anio: int, mes: int):
         color = colores.get(t["estado"], "FFFFFF")
         for c, v in enumerate([t["agente_nombre"],t["fecha_gasto"],t.get("categoria_nombre",""),
                                 t.get("comprobante",""),t.get("descripcion",""),t["valor"],
-                                t["estado"].upper(),t.get("valor_aprobado") or ""], 1):
+                                t["estado"].upper(),t.get("valor_aprobado") or "",t.get("motivo_rechazo","")], 1):
             cell = ws2.cell(row=ri, column=c, value=v)
             cell.fill = PatternFill("solid", fgColor=color)
             if c in (6,8): cell.number_format = '"$"#,##0.00'
-    for col, w in zip("ABCDEFGH",[28,12,16,16,30,14,14,14]):
+    for col, w in zip("ABCDEFGHI",[28,12,16,16,30,14,14,14,32]):
         ws2.column_dimensions[col].width = w
 
     # Hoja 3: Resumen Semanal
