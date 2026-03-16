@@ -566,7 +566,8 @@ const state = {
   tickets: [],
   resumen: [],
   ticketFilter: 'todos',
-  ticketSearch: ''
+  ticketSearch: '',
+  ticketMeses: []  // vacío = solo el mes actual del periodBar
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -597,8 +598,17 @@ async function loadResumen() {
 }
 
 async function loadTickets() {
-  let url = `/tickets?anio=${state.anio}&mes=${state.mes}`;
-  state.tickets = await api('GET', url);
+  if (state.ticketMeses.length === 0) {
+    // modo normal: solo el mes del período
+    state.tickets = await api('GET', `/tickets?anio=${state.anio}&mes=${state.mes}`);
+  } else {
+    // multi-mes: traer todos los del año y filtrar por meses seleccionados
+    const all = await api('GET', `/tickets?anio=${state.anio}`);
+    state.tickets = all.filter(t => {
+      const m = parseInt((t.fecha_gasto || '').slice(5, 7));
+      return state.ticketMeses.includes(m);
+    });
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -824,18 +834,42 @@ async function renderTickets() {
 
   const filtered = filterTickets();
 
+  const mesesConTickets = [...new Set(state.tickets.map(t => parseInt((t.fecha_gasto||'').slice(5,7))))].sort((a,b)=>a-b);
+
   document.getElementById('content').innerHTML = `
     ${periodBar()}
 
-    <div class="filters">
-      ${['todos','pendiente','aprobado','debito_parcial','rechazado'].map(f => `
-        <button class="filter-chip ${state.ticketFilter === f ? 'active' : ''}"
-          onclick="setTicketFilter('${f}')">
-          ${f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito parcial' : cap(f)}
-          ${f !== 'todos' ? `(${state.tickets.filter(t => t.estado === f).length})` : `(${state.tickets.length})`}
-        </button>`).join('')}
-      <input class="search-input" placeholder="🔍 Buscar agente..." value="${state.ticketSearch}"
-        oninput="state.ticketSearch=this.value;renderTicketsTable()">
+    <div class="filters" style="flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${['todos','pendiente','aprobado','debito_parcial','rechazado'].map(f => `
+          <button class="filter-chip ${state.ticketFilter === f ? 'active' : ''}"
+            onclick="setTicketFilter('${f}')">
+            ${f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito parcial' : cap(f)}
+            (${f === 'todos' ? state.tickets.length : state.tickets.filter(t => t.estado === f).length})
+          </button>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;align-items:center;background:var(--ice);border-radius:8px;padding:6px 10px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--gray500);font-weight:600;white-space:nowrap">📅 Meses:</span>
+          ${MESES.map((m, i) => {
+            const num = i + 1;
+            const active = state.ticketMeses.includes(num);
+            return `<button class="filter-chip ${active ? 'active' : ''}" style="padding:3px 9px;font-size:11.5px"
+              onclick="toggleMesTicket(${num})">${m.slice(0,3)}</button>`;
+          }).join('')}
+          ${state.ticketMeses.length > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 7px" onclick="limpiarMesesTicket()">✕ Solo ${MESES[state.mes-1].slice(0,3)}</button>` : ''}
+        </div>
+        <input class="search-input" placeholder="🔍 Buscar agente..." value="${state.ticketSearch}"
+          style="margin:0;width:180px"
+          oninput="state.ticketSearch=this.value;renderTicketsTable()">
+      </div>
+    </div>
+
+    <div style="font-size:12px;color:var(--gray500);padding:4px 2px">
+      ${state.ticketMeses.length > 0
+        ? `Mostrando: <strong>${state.ticketMeses.map(m => MESES[m-1]).join(', ')} ${state.anio}</strong>`
+        : `Mostrando: <strong>${MESES[state.mes-1]} ${state.anio}</strong>`}
+      — ${filterTickets().length} ticket(s) encontrado(s)
     </div>
 
     <div class="card" id="tickets-card">
@@ -855,12 +889,23 @@ function filterTickets() {
 
 function setTicketFilter(f) {
   state.ticketFilter = f;
-  document.querySelectorAll('.filter-chip').forEach((el, i) => {
-    el.classList.toggle('active', el.textContent.trim().startsWith(
-      f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito' : cap(f)
-    ));
-  });
-  renderTicketsTable();
+  renderTickets();
+}
+
+async function toggleMesTicket(mes) {
+  if (state.ticketMeses.includes(mes)) {
+    state.ticketMeses = state.ticketMeses.filter(m => m !== mes);
+  } else {
+    state.ticketMeses.push(mes);
+  }
+  await loadTickets();
+  renderTickets();
+}
+
+async function limpiarMesesTicket() {
+  state.ticketMeses = [];
+  await loadTickets();
+  renderTickets();
 }
 
 function renderTicketsTable() {
