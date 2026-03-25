@@ -120,6 +120,18 @@ if USE_PG:
                     cerrado_en TIMESTAMP,
                     UNIQUE(anio, mes)
                 );
+                CREATE TABLE IF NOT EXISTS actas (
+                    id SERIAL PRIMARY KEY,
+                    numero_acta TEXT NOT NULL,
+                    fecha DATE NOT NULL,
+                    tipo TEXT NOT NULL,
+                    titulo TEXT NOT NULL,
+                    cuerpo TEXT,
+                    participantes TEXT,
+                    redactado_por TEXT,
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    modificado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             cur.execute("""
                 INSERT INTO categorias (nombre)
@@ -214,6 +226,18 @@ else:
                     cerrado_por TEXT,
                     cerrado_en TEXT,
                     UNIQUE(anio, mes)
+                );
+                CREATE TABLE IF NOT EXISTS actas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    numero_acta TEXT NOT NULL,
+                    fecha TEXT NOT NULL,
+                    tipo TEXT NOT NULL,
+                    titulo TEXT NOT NULL,
+                    cuerpo TEXT,
+                    participantes TEXT,
+                    redactado_por TEXT,
+                    creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+                    modificado_en TEXT DEFAULT CURRENT_TIMESTAMP
                 );
                 INSERT OR IGNORE INTO categorias (nombre) VALUES
                     ('Transporte'),('Alojamiento'),('Alimentación'),
@@ -505,7 +529,7 @@ def descargar_modelo():
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
 
-    headers = ["agente_nombre *", "fecha_gasto * (AAAA-MM-DD)", "categoria", "comprobante", "descripcion", "valor *", "notas_internas"]
+    headers = ["agente_nombre *", "fecha_gasto * (DD/MM/AAAA)", "categoria", "comprobante", "descripcion", "valor *", "notas_internas"]
     col_widths = [28, 18, 16, 18, 32, 14, 24]
     for c, (h, w) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=2, column=c, value=h)
@@ -517,7 +541,7 @@ def descargar_modelo():
 
     # Instrucciones en fila 3
     ws.merge_cells("A3:G3")
-    ws["A3"] = "⚠ IMPORTANTE: agente_nombre debe coincidir EXACTAMENTE con el nombre registrado en el sistema. fecha_gasto formato: 2026-03-15. valor: solo números."
+    ws["A3"] = "⚠ IMPORTANTE: agente_nombre debe coincidir EXACTAMENTE con el nombre registrado en el sistema. fecha_gasto formato: 15/03/2026 (DD/MM/AAAA). valor: solo números."
     ws["A3"].font = Font(size=10, color="7B341E")
     ws["A3"].fill = PatternFill("solid", fgColor="FEF3C7")
     ws["A3"].alignment = Alignment(wrap_text=True)
@@ -525,9 +549,9 @@ def descargar_modelo():
 
     # Filas de ejemplo
     ejemplos = [
-        ("Seccional Buenos Aires", "2026-03-05", "Transporte", "FC-0001-00001", "Viaje a sede central", 12500, ""),
-        ("Seccional La Plata",     "2026-03-07", "Combustible","FC-0004-00002", "Carga nafta camioneta", 8500, ""),
-        ("Seccional Rosario",      "2026-03-11", "Alojamiento","FC-0002-00015", "2 noches congreso", 18000, ""),
+        ("Seccional Buenos Aires", "05/03/2026", "Transporte", "FC-0001-00001", "Viaje a sede central", 12500, ""),
+        ("Seccional La Plata",     "07/03/2026", "Combustible","FC-0004-00002", "Carga nafta camioneta", 8500, ""),
+        ("Seccional Rosario",      "11/03/2026", "Alojamiento","FC-0002-00015", "2 noches congreso", 18000, ""),
     ]
     for ri, ej in enumerate(ejemplos, 4):
         for c, v in enumerate(ej, 1):
@@ -608,16 +632,15 @@ async def importar_tickets(request: dict):
             if not agente_id:
                 errores.append(f"Fila {fila_num}: Agente '{agente_nombre}' no encontrado en el sistema"); continue
 
-            # Validar fecha
+            # Validar fecha — aceptar DD/MM/AAAA (principal) o AAAA-MM-DD (fallback)
             try:
-                datetime.strptime(fecha_gasto, "%Y-%m-%d")
+                dt = datetime.strptime(fecha_gasto, "%d/%m/%Y")
+                fecha_gasto = dt.strftime("%Y-%m-%d")
             except ValueError:
                 try:
-                    # Intentar formato DD/MM/AAAA
-                    dt = datetime.strptime(fecha_gasto, "%d/%m/%Y")
-                    fecha_gasto = dt.strftime("%Y-%m-%d")
+                    datetime.strptime(fecha_gasto, "%Y-%m-%d")  # ya está en formato correcto
                 except:
-                    errores.append(f"Fila {fila_num}: Fecha inválida '{fecha_gasto}' — usar formato AAAA-MM-DD"); continue
+                    errores.append(f"Fila {fila_num}: Fecha inválida '{fecha_gasto}' — usar formato DD/MM/AAAA"); continue
 
             # Validar valor
             try:
@@ -1544,3 +1567,369 @@ def reporte_por_agente_anual(anio: int):
             GROUP BY a.id, a.nombre ORDER BY total_aprobado DESC
         """, (_yp(anio),))
         return _rows(cur)
+
+# ── ACTAS ─────────────────────────────────────────────────────────────────────
+
+TIPOS_ACTA = ["Entrega de Viáticos", "Reunión / Asamblea", "Llamado / Citación", "Resolución / Acuerdo", "Otro"]
+
+class ActaCreate(BaseModel):
+    fecha: str
+    tipo: str
+    titulo: str
+    cuerpo: Optional[str] = None
+    participantes: Optional[str] = None
+    redactado_por: Optional[str] = None
+
+class ActaUpdate(BaseModel):
+    fecha: Optional[str] = None
+    tipo: Optional[str] = None
+    titulo: Optional[str] = None
+    cuerpo: Optional[str] = None
+    participantes: Optional[str] = None
+    redactado_por: Optional[str] = None
+
+def _acta_to_dict(r):
+    d = dict(r)
+    for k in ("fecha", "creado_en", "modificado_en"):
+        if d.get(k) and not isinstance(d[k], str):
+            d[k] = d[k].isoformat()
+    return d
+
+def _gen_numero_acta(conn):
+    """Genera número correlativo tipo 0001/2026"""
+    anio = datetime.now().year
+    cur = conn.cursor()
+    if USE_PG:
+        cur.execute("SELECT COUNT(*) as n FROM actas WHERE EXTRACT(YEAR FROM fecha::date) = %s", (anio,))
+    else:
+        cur.execute("SELECT COUNT(*) as n FROM actas WHERE strftime('%Y', fecha) = ?", (str(anio),))
+    row = _row(cur)
+    n = (row["n"] if row else 0) + 1
+    return f"{n:04d}/{anio}"
+
+@app.get("/api/actas")
+def listar_actas(buscar: Optional[str] = None, tipo: Optional[str] = None,
+                 anio: Optional[int] = None, mes: Optional[int] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = "SELECT * FROM actas WHERE 1=1"
+        params = []
+        if tipo:
+            q += f" AND tipo = {PH}"; params.append(tipo)
+        if anio:
+            if USE_PG:
+                q += f" AND EXTRACT(YEAR FROM fecha::date) = {PH}"
+            else:
+                q += f" AND strftime('%Y', fecha) = {PH}"
+            params.append(_yp(anio))
+        if mes:
+            if USE_PG:
+                q += f" AND EXTRACT(MONTH FROM fecha::date) = {PH}"
+            else:
+                q += f" AND strftime('%m', fecha) = {PH}"
+            params.append(_mp(mes))
+        if buscar:
+            if USE_PG:
+                q += f" AND (titulo ILIKE {PH} OR cuerpo ILIKE {PH} OR participantes ILIKE {PH} OR numero_acta ILIKE {PH})"
+                p = f"%{buscar}%"
+                params += [p, p, p, p]
+            else:
+                q += f" AND (titulo LIKE {PH} OR cuerpo LIKE {PH} OR participantes LIKE {PH} OR numero_acta LIKE {PH})"
+                p = f"%{buscar}%"
+                params += [p, p, p, p]
+        q += " ORDER BY fecha DESC, id DESC"
+        cur.execute(q, params)
+        return [_acta_to_dict(r) for r in _rows(cur)]
+
+@app.get("/api/actas/{acta_id}")
+def obtener_acta(acta_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM actas WHERE id = {PH}", (acta_id,))
+        row = _row(cur)
+        if not row:
+            raise HTTPException(404, "Acta no encontrada")
+        return _acta_to_dict(row)
+
+@app.post("/api/actas")
+def crear_acta(data: ActaCreate):
+    with get_db() as conn:
+        numero = _gen_numero_acta(conn)
+        if USE_PG:
+            new_id = _insert(conn,
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por)",
+                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
+        else:
+            new_id = _insert(conn,
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (?,?,?,?,?,?,?)",
+                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
+    return {"id": new_id, "numero_acta": numero, "mensaje": "Acta creada"}
+
+@app.put("/api/actas/{acta_id}")
+def actualizar_acta(acta_id: int, data: ActaUpdate):
+    fields = {k: v for k, v in data.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "Nada para actualizar")
+    fields["modificado_en"] = datetime.now().isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_PG:
+            set_clause = ", ".join(f"{k}=%s" for k in fields)
+            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=%s", list(fields.values()) + [acta_id])
+        else:
+            set_clause = ", ".join(f"{k}=?" for k in fields)
+            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=?", list(fields.values()) + [acta_id])
+    return {"mensaje": "Acta actualizada"}
+
+@app.delete("/api/actas/{acta_id}")
+def eliminar_acta(acta_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM actas WHERE id = {PH}", (acta_id,))
+    return {"mensaje": "Acta eliminada"}
+
+@app.get("/api/actas/exportar/excel")
+def exportar_actas_excel(anio: Optional[int] = None):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Libro de Actas"
+
+    titulo = f"SINDICATO ATE — LIBRO DE ACTAS{f' — {anio}' if anio else ''}"
+    ws.merge_cells("A1:H1")
+    ws["A1"] = titulo
+    ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    hdrs = ["N° Acta", "Fecha", "Tipo", "Título", "Participantes", "Cuerpo / Contenido", "Redactado por", "Registrado"]
+    for c, h in enumerate(hdrs, 1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2d6a9f")
+        cell.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[2].height = 20
+
+    tipo_colores = {
+        "Entrega de Viáticos":  "D4EDDA",
+        "Reunión / Asamblea":   "D1ECF1",
+        "Llamado / Citación":   "FFF3CD",
+        "Resolución / Acuerdo": "EDE7F6",
+        "Otro":                 "F8F9FA",
+    }
+
+    actas = listar_actas(anio=anio)
+    for ri, a in enumerate(actas, 3):
+        color = tipo_colores.get(a.get("tipo", ""), "FFFFFF")
+        fecha_fmt = ""
+        if a.get("fecha"):
+            try:
+                from datetime import date
+                fd = a["fecha"][:10]
+                parts = fd.split("-")
+                fecha_fmt = f"{parts[2]}/{parts[1]}/{parts[0]}"
+            except:
+                fecha_fmt = a.get("fecha", "")
+
+        vals = [
+            a.get("numero_acta", ""),
+            fecha_fmt,
+            a.get("tipo", ""),
+            a.get("titulo", ""),
+            a.get("participantes", "") or "",
+            a.get("cuerpo", "") or "",
+            a.get("redactado_por", "") or "",
+            (a.get("creado_en", "") or "")[:10],
+        ]
+        for c, v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=c, value=v)
+            cell.fill = PatternFill("solid", fgColor=color)
+            cell.alignment = Alignment(wrap_text=(c in (5, 6)), vertical="top")
+
+    col_widths = [12, 12, 22, 36, 30, 60, 18, 12]
+    for col, w in zip("ABCDEFGH", col_widths):
+        ws.column_dimensions[col].width = w
+
+    # Auto-height for body rows
+    for row in ws.iter_rows(min_row=3, max_row=len(actas)+2):
+        ws.row_dimensions[row[0].row].height = 40
+
+    filename = f"libro_actas_ATE{'_'+str(anio) if anio else ''}.xlsx"
+    path = os.path.join(EXPORTS_DIR, filename)
+    wb.save(path)
+    return FileResponse(path, filename=filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ── ACTAS ─────────────────────────────────────────────────────────────────────
+
+TIPOS_ACTA = ["Entrega de Viaticos", "Reunion / Asamblea", "Llamado / Citacion", "Resolucion / Acuerdo", "Otro"]
+
+class ActaCreate(BaseModel):
+    fecha: str
+    tipo: str
+    titulo: str
+    cuerpo: Optional[str] = None
+    participantes: Optional[str] = None
+    redactado_por: Optional[str] = None
+
+class ActaUpdate(BaseModel):
+    fecha: Optional[str] = None
+    tipo: Optional[str] = None
+    titulo: Optional[str] = None
+    cuerpo: Optional[str] = None
+    participantes: Optional[str] = None
+    redactado_por: Optional[str] = None
+
+def _acta_to_dict(r):
+    d = dict(r)
+    for k in ("fecha", "creado_en", "modificado_en"):
+        if d.get(k) and not isinstance(d[k], str):
+            d[k] = d[k].isoformat()
+    return d
+
+def _gen_numero_acta(conn):
+    anio = datetime.now().year
+    cur = conn.cursor()
+    if USE_PG:
+        cur.execute("SELECT COUNT(*) as n FROM actas WHERE EXTRACT(YEAR FROM fecha::date) = %s", (anio,))
+    else:
+        cur.execute("SELECT COUNT(*) as n FROM actas WHERE strftime('%Y', fecha) = ?", (str(anio),))
+    row = _row(cur)
+    n = (row["n"] if row else 0) + 1
+    return f"{n:04d}/{anio}"
+
+@app.get("/api/actas")
+def listar_actas(buscar: Optional[str] = None, tipo: Optional[str] = None,
+                 anio: Optional[int] = None, mes: Optional[int] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = "SELECT * FROM actas WHERE 1=1"
+        params = []
+        if tipo:
+            q += f" AND tipo = {PH}"; params.append(tipo)
+        if anio:
+            if USE_PG:
+                q += " AND EXTRACT(YEAR FROM fecha::date) = %s"
+            else:
+                q += " AND strftime('%Y', fecha) = ?"
+            params.append(_yp(anio))
+        if mes:
+            if USE_PG:
+                q += " AND EXTRACT(MONTH FROM fecha::date) = %s"
+            else:
+                q += " AND strftime('%m', fecha) = ?"
+            params.append(_mp(mes))
+        if buscar:
+            p = f"%{buscar}%"
+            if USE_PG:
+                q += " AND (titulo ILIKE %s OR cuerpo ILIKE %s OR participantes ILIKE %s OR numero_acta ILIKE %s)"
+                params += [p, p, p, p]
+            else:
+                q += " AND (titulo LIKE ? OR cuerpo LIKE ? OR participantes LIKE ? OR numero_acta LIKE ?)"
+                params += [p, p, p, p]
+        q += " ORDER BY fecha DESC, id DESC"
+        cur.execute(q, params)
+        return [_acta_to_dict(r) for r in _rows(cur)]
+
+@app.get("/api/actas/{acta_id}")
+def obtener_acta(acta_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM actas WHERE id = {PH}", (acta_id,))
+        row = _row(cur)
+        if not row:
+            raise HTTPException(404, "Acta no encontrada")
+        return _acta_to_dict(row)
+
+@app.post("/api/actas")
+def crear_acta(data: ActaCreate):
+    with get_db() as conn:
+        numero = _gen_numero_acta(conn)
+        if USE_PG:
+            new_id = _insert(conn,
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por)",
+                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
+        else:
+            new_id = _insert(conn,
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (?,?,?,?,?,?,?)",
+                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
+    return {"id": new_id, "numero_acta": numero, "mensaje": "Acta creada"}
+
+@app.put("/api/actas/{acta_id}")
+def actualizar_acta(acta_id: int, data: ActaUpdate):
+    fields = {k: v for k, v in data.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "Nada para actualizar")
+    fields["modificado_en"] = datetime.now().isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_PG:
+            set_clause = ", ".join(f"{k}=%s" for k in fields)
+            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=%s", list(fields.values()) + [acta_id])
+        else:
+            set_clause = ", ".join(f"{k}=?" for k in fields)
+            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=?", list(fields.values()) + [acta_id])
+    return {"mensaje": "Acta actualizada"}
+
+@app.delete("/api/actas/{acta_id}")
+def eliminar_acta(acta_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM actas WHERE id = {PH}", (acta_id,))
+    return {"mensaje": "Acta eliminada"}
+
+@app.get("/api/actas/exportar/excel")
+def exportar_actas_excel(anio: Optional[int] = None):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment as XlAlign
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Libro de Actas"
+    titulo_hdr = f"SINDICATO ATE - LIBRO DE ACTAS{' - '+str(anio) if anio else ''}"
+    ws.merge_cells("A1:H1")
+    ws["A1"] = titulo_hdr
+    ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws["A1"].alignment = XlAlign(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+    hdrs = ["N Acta", "Fecha", "Tipo", "Titulo", "Participantes", "Contenido", "Redactado por", "Registrado"]
+    for c, h in enumerate(hdrs, 1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2d6a9f")
+        cell.alignment = XlAlign(horizontal="center")
+    ws.row_dimensions[2].height = 20
+    tipo_colores = {
+        "Entrega de Viaticos":   "D4EDDA",
+        "Reunion / Asamblea":    "D1ECF1",
+        "Llamado / Citacion":    "FFF3CD",
+        "Resolucion / Acuerdo":  "EDE7F6",
+        "Otro":                  "F8F9FA",
+    }
+    actas_data = listar_actas(anio=anio)
+    for ri, a in enumerate(actas_data, 3):
+        color = tipo_colores.get(a.get("tipo", ""), "FFFFFF")
+        fecha_fmt = ""
+        if a.get("fecha"):
+            try:
+                fd = a["fecha"][:10].split("-")
+                fecha_fmt = f"{fd[2]}/{fd[1]}/{fd[0]}"
+            except:
+                fecha_fmt = a.get("fecha", "")
+        vals = [a.get("numero_acta",""), fecha_fmt, a.get("tipo",""), a.get("titulo",""),
+                a.get("participantes","") or "", a.get("cuerpo","") or "",
+                a.get("redactado_por","") or "", (a.get("creado_en","") or "")[:10]]
+        for c, v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=c, value=v)
+            cell.fill = PatternFill("solid", fgColor=color)
+            cell.alignment = XlAlign(wrap_text=(c in (5,6)), vertical="top")
+        ws.row_dimensions[ri].height = 40
+    for col, w in zip("ABCDEFGH", [12,12,22,36,30,60,18,12]):
+        ws.column_dimensions[col].width = w
+    filename = f"libro_actas_ATE{'_'+str(anio) if anio else ''}.xlsx"
+    path = os.path.join(EXPORTS_DIR, filename)
+    wb.save(path)
+    return FileResponse(path, filename=filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
