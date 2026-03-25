@@ -525,6 +525,10 @@ tbody td {
       <button class="nav-item" onclick="navigate('topes')">
         <span class="icon">🎯</span> Topes Mensuales
       </button>
+      <div class="nav-section">Registros</div>
+      <button class="nav-item" onclick="navigate('actas')">
+        <span class="icon">📋</span> Libro de Actas
+      </button>
       <div class="nav-section">Reportes</div>
       <button class="nav-item" onclick="navigate('reportes')">
         <span class="icon">📈</span> Reportes
@@ -637,6 +641,7 @@ async function navigate(page) {
     tickets: 'Tickets de Viáticos',
     agentes: 'Gestión de Agentes',
     topes: 'Topes Mensuales',
+    actas: 'Libro de Actas',
     reportes: 'Reportes y Estadísticas',
     exportar: 'Exportar Reportes'
   };
@@ -651,6 +656,7 @@ async function navigate(page) {
   else if (page === 'tickets') await renderTickets();
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
+  else if (page === 'actas') await renderActas();
   else if (page === 'reportes') await renderReportes();
   else if (page === 'exportar') renderExportar();
 }
@@ -1707,7 +1713,7 @@ async function leerExcelImport(file) {
         const y = val.getFullYear();
         const m = String(val.getMonth()+1).padStart(2,'0');
         const d = String(val.getDate()).padStart(2,'0');
-        val = `${y}-${m}-${d}`;
+        val = `${d}/${m}/${y}`;
       }
       obj[h] = val !== undefined && val !== null ? String(val).trim() : '';
     });
@@ -2128,6 +2134,232 @@ async function reabrirDesdeReportes(anio, mes) {
 }
 
 // ══════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════
+//  ACTAS
+// ══════════════════════════════════════════════════════════
+const TIPOS_ACTA = [
+  "Entrega de Viaticos",
+  "Reunion / Asamblea",
+  "Llamado / Citacion",
+  "Resolucion / Acuerdo",
+  "Otro"
+];
+
+const TIPO_ICONS = {
+  "Entrega de Viaticos":  "💰",
+  "Reunion / Asamblea":   "🤝",
+  "Llamado / Citacion":   "📞",
+  "Resolucion / Acuerdo": "✅",
+  "Otro":                 "📄"
+};
+
+const TIPO_COLORS = {
+  "Entrega de Viaticos":  { bg: "#d4edda", border: "#28a745", text: "#155724" },
+  "Reunion / Asamblea":   { bg: "#d1ecf1", border: "#17a2b8", text: "#0c5460" },
+  "Llamado / Citacion":   { bg: "#fff3cd", border: "#ffc107", text: "#856404" },
+  "Resolucion / Acuerdo": { bg: "#ede7f6", border: "#7c3aed", text: "#4c1d95" },
+  "Otro":                 { bg: "#f8f9fa", border: "#adb5bd", text: "#495057" }
+};
+
+let actasState = {
+  actas: [],
+  buscar: '',
+  tipoFiltro: '',
+  anioFiltro: new Date().getFullYear()
+};
+
+async function renderActas() {
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="exportarActasExcel()">📥 Exportar Excel</button>
+    <button class="btn btn-primary btn-sm" onclick="openModalActa()">+ Nueva Acta</button>`;
+
+  await cargarActas();
+  renderActasList();
+}
+
+async function cargarActas() {
+  const params = new URLSearchParams();
+  if (actasState.buscar)    params.set('buscar', actasState.buscar);
+  if (actasState.tipoFiltro) params.set('tipo', actasState.tipoFiltro);
+  if (actasState.anioFiltro) params.set('anio', actasState.anioFiltro);
+  actasState.actas = await api('GET', `/actas?${params}`);
+}
+
+function renderActasList() {
+  const years = [...new Set(actasState.actas.map(a => (a.fecha||'').slice(0,4)).filter(Boolean))];
+  const allYears = [2024, 2025, 2026, 2027];
+
+  document.getElementById('content').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:16px">
+
+      <!-- Filtros -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input class="search-input" placeholder="🔍 Buscar en actas..." value="${actasState.buscar}"
+          style="width:220px;margin:0"
+          oninput="actasState.buscar=this.value;debounceActas()">
+        <select class="input" style="width:200px;padding:8px 12px"
+          onchange="actasState.tipoFiltro=this.value;cargarActas().then(renderActasList)">
+          <option value="">Todos los tipos</option>
+          ${TIPOS_ACTA.map(t => `<option value="${t}" ${actasState.tipoFiltro===t?'selected':''}>${TIPO_ICONS[t]} ${t}</option>`).join('')}
+        </select>
+        <select class="input" style="width:110px;padding:8px 12px"
+          onchange="actasState.anioFiltro=this.value?parseInt(this.value):null;cargarActas().then(renderActasList)">
+          <option value="">Todos</option>
+          ${allYears.map(y => `<option value="${y}" ${actasState.anioFiltro==y?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <span style="font-size:12px;color:var(--gray500);margin-left:4px">${actasState.actas.length} acta(s)</span>
+      </div>
+
+      <!-- Lista de actas -->
+      <div id="actas-lista">
+        ${actasState.actas.length === 0
+          ? `<div class="empty-state"><div class="emoji">📋</div><p>Sin actas registradas</p><small>Creá la primera acta con el botón + Nueva Acta</small></div>`
+          : actasState.actas.map(a => renderActaCard(a)).join('')
+        }
+      </div>
+    </div>`;
+}
+
+function renderActaCard(a) {
+  const col = TIPO_COLORS[a.tipo] || TIPO_COLORS["Otro"];
+  const icon = TIPO_ICONS[a.tipo] || "📄";
+  const fecha = a.fecha ? a.fecha.slice(0,10).split('-').reverse().join('/') : '-';
+  const preview = (a.cuerpo || '').slice(0, 180) + ((a.cuerpo||'').length > 180 ? '...' : '');
+  const partic = a.participantes ? `<div style="font-size:12px;color:var(--gray500);margin-top:6px">👥 ${a.participantes}</div>` : '';
+  const redactor = a.redactado_por ? `<span style="font-size:11px;color:var(--gray500)">Redactado por: ${a.redactado_por}</span>` : '';
+
+  return `
+    <div style="border:1px solid ${col.border};border-left:4px solid ${col.border};border-radius:10px;background:white;padding:16px 20px;margin-bottom:10px;transition:box-shadow .15s"
+         onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow=''">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="background:${col.bg};color:${col.text};border:1px solid ${col.border};padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:600">${icon} ${a.tipo}</span>
+            <span style="font-weight:700;color:var(--navy);font-size:13px">Acta N° ${a.numero_acta}</span>
+            <span style="color:var(--gray500);font-size:12px">📅 ${fecha}</span>
+          </div>
+          <div style="font-weight:600;font-size:15px;color:var(--navy);margin-bottom:6px">${a.titulo}</div>
+          ${preview ? `<div style="font-size:13px;color:var(--gray600);line-height:1.5;white-space:pre-wrap">${preview}</div>` : ''}
+          ${partic}
+          <div style="margin-top:8px">${redactor}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-ghost btn-sm" onclick="openModalActa(${a.id})" title="Editar">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="eliminarActa(${a.id}, '${(a.titulo||'').replace(/'/g,"\'")}')">🗑</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+let _actasDebounce;
+function debounceActas() {
+  clearTimeout(_actasDebounce);
+  _actasDebounce = setTimeout(() => cargarActas().then(renderActasList), 350);
+}
+
+async function openModalActa(id = null) {
+  const hoy = new Date().toISOString().slice(0,10);
+  let acta = null;
+  if (id) {
+    acta = await api('GET', `/actas/${id}`);
+  }
+  const titulo_modal = acta ? `Editar Acta N° ${acta.numero_acta}` : 'Nueva Acta';
+  const fecha_val = acta ? (acta.fecha||'').slice(0,10) : hoy;
+
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">📋 ${titulo_modal}</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <label class="label">Fecha *</label>
+          <input type="date" class="input" id="acta-fecha" value="${fecha_val}">
+        </div>
+        <div>
+          <label class="label">Tipo *</label>
+          <select class="input" id="acta-tipo">
+            ${TIPOS_ACTA.map(t => `<option value="${t}" ${acta?.tipo===t?'selected':''}>${TIPO_ICONS[t]} ${t}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="label">Título *</label>
+        <input type="text" class="input" id="acta-titulo" placeholder="Ej: Entrega de viáticos marzo 2026"
+          value="${acta?.titulo||''}">
+      </div>
+      <div>
+        <label class="label">Contenido / Cuerpo del acta</label>
+        <textarea class="input" id="acta-cuerpo" rows="7"
+          style="resize:vertical;font-family:inherit;line-height:1.6"
+          placeholder="Escribí el contenido del acta aquí...&#10;&#10;Podés incluir:&#10;- Temas tratados&#10;- Acuerdos tomados&#10;- Valores de topes&#10;- Cualquier otra información relevante">${acta?.cuerpo||''}</textarea>
+      </div>
+      <div>
+        <label class="label">Participantes</label>
+        <input type="text" class="input" id="acta-participantes"
+          placeholder="Ej: Juan Pérez, María García, Carlos López"
+          value="${acta?.participantes||''}">
+      </div>
+      <div>
+        <label class="label">Redactado por</label>
+        <input type="text" class="input" id="acta-redactor"
+          placeholder="Nombre de quien redacta el acta"
+          value="${acta?.redactado_por||''}">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarActa(${id||'null'})">
+        ${acta ? '💾 Guardar cambios' : '✅ Crear acta'}
+      </button>
+    </div>
+  `);
+}
+
+async function guardarActa(id) {
+  const fecha  = document.getElementById('acta-fecha').value;
+  const tipo   = document.getElementById('acta-tipo').value;
+  const titulo = document.getElementById('acta-titulo').value.trim();
+  const cuerpo = document.getElementById('acta-cuerpo').value.trim();
+  const partic = document.getElementById('acta-participantes').value.trim();
+  const redact = document.getElementById('acta-redactor').value.trim();
+
+  if (!fecha || !titulo) return toast('Completá fecha y título', 'error');
+
+  const payload = { fecha, tipo, titulo,
+    cuerpo: cuerpo || null,
+    participantes: partic || null,
+    redactado_por: redact || null };
+
+  if (id) {
+    await api('PUT', `/actas/${id}`, payload);
+    toast('Acta actualizada', 'success');
+  } else {
+    const res = await api('POST', '/actas', payload);
+    toast(`Acta N° ${res.numero_acta} creada`, 'success');
+  }
+  closeModal();
+  await cargarActas();
+  renderActasList();
+}
+
+async function eliminarActa(id, titulo) {
+  if (!confirm(`¿Eliminar el acta "${titulo}"?\n\nEsta acción no se puede deshacer.`)) return;
+  await api('DELETE', `/actas/${id}`);
+  toast('Acta eliminada');
+  await cargarActas();
+  renderActasList();
+}
+
+function exportarActasExcel() {
+  const anio = actasState.anioFiltro || '';
+  const url = `/api/actas/exportar/excel${anio ? '?anio='+anio : ''}`;
+  window.location.href = url;
+  toast('Exportando libro de actas...', 'success');
+}
+
 //  INIT
 // ══════════════════════════════════════════════════════════
 navigate('dashboard');
