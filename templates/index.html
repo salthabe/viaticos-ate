@@ -273,6 +273,7 @@ tbody td {
 .badge-aprobado { background: var(--green-bg); color: var(--green); }
 .badge-rechazado { background: var(--red-bg); color: var(--red); }
 .badge-debito { background: var(--orange-bg); color: var(--orange); }
+.badge-pagado { background: #e0f2fe; color: #0369a1; }
 
 /* ── BUTTONS ── */
 .btn {
@@ -847,10 +848,10 @@ async function renderTickets() {
 
     <div class="filters" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        ${['todos','pendiente','aprobado','debito_parcial','rechazado'].map(f => `
+        ${['todos','pendiente','aprobado','debito_parcial','rechazado','pagado'].map(f => `
           <button class="filter-chip ${state.ticketFilter === f ? 'active' : ''}"
             onclick="setTicketFilter('${f}')">
-            ${f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito parcial' : cap(f)}
+            ${f === 'todos' ? 'Todos' : f === 'debito_parcial' ? 'Débito parcial' : f === 'pagado' ? 'Pagado' : cap(f)}
             (${f === 'todos' ? state.tickets.length : state.tickets.filter(t => t.estado === f).length})
           </button>`).join('')}
       </div>
@@ -938,6 +939,8 @@ function renderTicketsTableHTML(tickets) {
         <td>
           <div style="display:flex;gap:4px">
             ${t.estado === 'pendiente' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revisarTicket(${t.id},'modal')" title="Revisar">⋯</button>` : ''}
+            ${(t.estado === 'aprobado' || t.estado === 'debito_parcial') ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="marcarPagado(${t.id})" title="Marcar como pagado" style="color:#0369a1">💸</button>` : ''}
+            ${t.estado === 'pagado' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="desmarcarPagado(${t.id})" title="Desmarcar pago" style="color:#64748b;font-size:11px">↩</button>` : ''}
             <button class="btn btn-ghost btn-sm btn-icon" onclick="verAdjuntosTicket(${t.id})" title="Adjuntos">📎</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="verHistorialTicket(${t.id})" title="Historial">🕐</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarTicket(${t.id})" title="Eliminar">🗑</button>
@@ -1503,7 +1506,8 @@ function estadoBadge(estado) {
     pendiente: ['badge-pendiente', '⏳ Pendiente'],
     aprobado: ['badge-aprobado', '✅ Aprobado'],
     rechazado: ['badge-rechazado', '❌ Rechazado'],
-    debito_parcial: ['badge-debito', '⚠️ Débito parcial']
+    debito_parcial: ['badge-debito', '⚠️ Débito parcial'],
+    pagado: ['badge-pagado', '💸 Pagado']
   };
   const [cls, label] = map[estado] || ['', estado];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -2134,6 +2138,31 @@ async function reabrirDesdeReportes(anio, mes) {
 }
 
 // ══════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════
+//  MARCAR PAGADO
+// ══════════════════════════════════════════════════════════
+async function marcarPagado(ticketId) {
+  if (!confirm('¿Marcar este ticket como PAGADO?\n\nEsto indica que el reintegro ya fue efectivamente transferido al agente.')) return;
+  await api('PUT', `/tickets/${ticketId}/revision`, {
+    estado: 'pagado',
+    revisado_por: 'Sistema'
+  });
+  toast('Ticket marcado como pagado 💸', 'success');
+  await loadTickets();
+  renderTickets();
+}
+
+async function desmarcarPagado(ticketId) {
+  if (!confirm('¿Desmarcar el pago de este ticket?\n\nVolvera al estado "aprobado".')) return;
+  await api('PUT', `/tickets/${ticketId}/revision`, {
+    estado: 'aprobado',
+    revisado_por: 'Sistema'
+  });
+  toast('Pago desmarcado — ticket vuelve a Aprobado');
+  await loadTickets();
+  renderTickets();
+}
 
 // ══════════════════════════════════════════════════════════
 //  ACTAS
