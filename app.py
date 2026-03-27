@@ -363,7 +363,7 @@ def crear_ticket(data: TicketCreate):
 
 @app.put("/api/tickets/{ticket_id}/revision")
 def revisar_ticket(ticket_id: int, data: TicketRevision):
-    if data.estado not in ("aprobado", "rechazado", "debito_parcial"):
+    if data.estado not in ("aprobado", "rechazado", "debito_parcial", "pagado"):
         raise HTTPException(400, "Estado inválido")
     with get_db() as conn:
         cur = conn.cursor()
@@ -372,7 +372,9 @@ def revisar_ticket(ticket_id: int, data: TicketRevision):
         if not ticket:
             raise HTTPException(404, "Ticket no encontrado")
         valor_aprobado = (data.valor_aprobado if data.estado == "debito_parcial"
-                          else ticket["valor"] if data.estado == "aprobado" else 0)
+                          else ticket["valor"] if data.estado == "aprobado"
+                          else ticket.get("valor_aprobado") if data.estado == "pagado"
+                          else 0)
         cur.execute(f"""UPDATE tickets SET estado={PH}, motivo_rechazo={PH}, valor_aprobado={PH},
                     revisado_en=CURRENT_TIMESTAMP, revisado_por={PH} WHERE id={PH}""",
                     (data.estado, data.motivo_rechazo, valor_aprobado, data.revisado_por, ticket_id))
@@ -410,11 +412,11 @@ def resumen(anio: int, mes: int):
         cur.execute(f"""
             SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
                 COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
-                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado IN ('aprobado','pagado') THEN t.valor_aprobado END), 0) as total_aprobado,
                 COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
                 COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
                 COUNT(CASE WHEN t.estado='pendiente' THEN 1 END)                                as cant_pendientes,
-                COUNT(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN 1 END)           as cant_aprobados
+                COUNT(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN 1 END)           as cant_aprobados
             FROM agentes a
             LEFT JOIN tickets t ON a.id = t.agente_id
                 AND {_year_filter('t.fecha_gasto')}
@@ -448,7 +450,7 @@ def resumen_semanal(anio: int, mes: int):
             SELECT t.*, a.nombre as agente_nombre
             FROM tickets t JOIN agentes a ON t.agente_id = a.id
             WHERE {_year_filter('t.fecha_gasto')} AND {_month_filter('t.fecha_gasto')}
-              AND t.estado IN ('aprobado','debito_parcial')
+              AND t.estado IN ('aprobado','debito_parcial','pagado')
             ORDER BY t.fecha_gasto
         """, (_yp(anio), _mp(mes)))
         tickets = _rows(cur)
@@ -738,7 +740,7 @@ def exportar_excel_custom(
     wb = openpyxl.Workbook()
     first = True
 
-    colores = {"aprobado":"D4EDDA","rechazado":"F8D7DA","debito_parcial":"FFF3CD","pendiente":"FFFFFF"}
+    colores = {"aprobado":"D4EDDA","rechazado":"F8D7DA","debito_parcial":"FFF3CD","pendiente":"FFFFFF","pagado":"E0F2FE"}
 
     if incluir_tickets:
         ws = wb.active if first else wb.create_sheet("Tickets")
@@ -919,7 +921,7 @@ def exportar_excel(anio: int, mes: int):
         cell = ws2.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="2d6a9f")
 
-    colores = {"aprobado":"D4EDDA","rechazado":"F8D7DA","debito_parcial":"FFF3CD","pendiente":"FFFFFF"}
+    colores = {"aprobado":"D4EDDA","rechazado":"F8D7DA","debito_parcial":"FFF3CD","pendiente":"FFFFFF","pagado":"E0F2FE"}
     for ri, t in enumerate(listar_tickets(anio=anio, mes=mes), 3):
         color = colores.get(t["estado"], "FFFFFF")
         for c, v in enumerate([t["agente_nombre"],t["fecha_gasto"],t.get("categoria_nombre",""),
@@ -1298,7 +1300,7 @@ def reporte_por_categoria(anio: Optional[int] = None, mes: Optional[int] = None)
         q = """SELECT c.nombre as categoria,
                       COUNT(*) as cantidad,
                       SUM(t.valor) as total_presentado,
-                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
                       COUNT(CASE WHEN t.estado='aprobado' THEN 1 END) as cant_aprobados,
                       COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as cant_rechazados
                FROM tickets t
@@ -1322,7 +1324,7 @@ def reporte_mensual_anual(anio: int):
                 SELECT EXTRACT(MONTH FROM fecha_gasto)::int as mes,
                        COUNT(*) as cantidad,
                        SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
                        COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
                 FROM tickets WHERE EXTRACT(YEAR FROM fecha_gasto) = %s
                 GROUP BY mes ORDER BY mes
@@ -1332,7 +1334,7 @@ def reporte_mensual_anual(anio: int):
                 SELECT CAST(strftime('%m', fecha_gasto) AS INTEGER) as mes,
                        COUNT(*) as cantidad,
                        SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
                        COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
                 FROM tickets WHERE strftime('%Y', fecha_gasto) = ?
                 GROUP BY mes ORDER BY mes
@@ -1347,7 +1349,7 @@ def reporte_por_agente_anual(anio: int):
             SELECT a.nombre,
                    COUNT(t.id) as total_tickets,
                    SUM(t.valor) as total_presentado,
-                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
                    COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as rechazados,
                    COUNT(CASE WHEN t.estado='pendiente' THEN 1 END) as pendientes
             FROM agentes a
@@ -1513,7 +1515,7 @@ def reporte_por_categoria(anio: Optional[int] = None, mes: Optional[int] = None)
         q = """SELECT COALESCE(c.nombre,'Sin categoria') as categoria,
                       COUNT(*) as cantidad,
                       SUM(t.valor) as total_presentado,
-                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
+                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
                       COUNT(CASE WHEN t.estado='aprobado' THEN 1 END) as cant_aprobados,
                       COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as cant_rechazados
                FROM tickets t LEFT JOIN categorias c ON t.categoria_id = c.id WHERE 1=1"""
@@ -1534,7 +1536,7 @@ def reporte_mensual_anual(anio: int):
             cur.execute("""
                 SELECT EXTRACT(MONTH FROM fecha_gasto)::int as mes,
                        COUNT(*) as cantidad, SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
                        COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
                 FROM tickets WHERE EXTRACT(YEAR FROM fecha_gasto)=%s
                 GROUP BY mes ORDER BY mes
@@ -1543,7 +1545,7 @@ def reporte_mensual_anual(anio: int):
             cur.execute("""
                 SELECT CAST(strftime('%m',fecha_gasto) AS INTEGER) as mes,
                        COUNT(*) as cantidad, SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial') THEN valor_aprobado ELSE 0 END) as total_aprobado,
+                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
                        COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
                 FROM tickets WHERE strftime('%Y',fecha_gasto)=?
                 GROUP BY mes ORDER BY mes
@@ -1558,7 +1560,7 @@ def reporte_por_agente_anual(anio: int):
             SELECT a.nombre,
                    COUNT(t.id) as total_tickets,
                    SUM(COALESCE(t.valor,0)) as total_presentado,
-                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial') THEN COALESCE(t.valor_aprobado,0) ELSE 0 END) as total_aprobado,
+                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN COALESCE(t.valor_aprobado,0) ELSE 0 END) as total_aprobado,
                    COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as rechazados,
                    COUNT(CASE WHEN t.estado='pendiente' THEN 1 END) as pendientes
             FROM agentes a
