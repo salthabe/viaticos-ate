@@ -1087,14 +1087,33 @@ function renderExportar() {
             <select class="select" id="cx-agente">${agentesOpts}</select>
           </div>
           <div class="field">
-            <label>Estado</label>
-            <select class="select" id="cx-estado">
-              <option value="">Todos los estados</option>
-              <option value="pendiente">Pendiente</option>
-              <option value="aprobado">Aprobado</option>
-              <option value="debito_parcial">Débito parcial</option>
-              <option value="rechazado">Rechazado</option>
-            </select>
+            <label>Estados <small style="color:var(--gray500);font-weight:400">(podés elegir varios)</small></label>
+            <div style="display:flex;flex-direction:column;gap:5px;padding:6px 0" id="cx-estados-wrap">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--gray500);font-weight:500">
+                <input type="checkbox" id="cx-est-todos" value="" checked style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoTodos(this)">
+                Todos los estados
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#d97706;font-weight:500">
+                <input type="checkbox" class="cx-est-item" value="pendiente" style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoItem()">
+                ⏳ Pendiente
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#16a34a;font-weight:500">
+                <input type="checkbox" class="cx-est-item" value="aprobado" style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoItem()">
+                ✅ Aprobado
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ea580c;font-weight:500">
+                <input type="checkbox" class="cx-est-item" value="debito_parcial" style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoItem()">
+                ⚠️ Débito parcial
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#dc2626;font-weight:500">
+                <input type="checkbox" class="cx-est-item" value="rechazado" style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoItem()">
+                ❌ Rechazado
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#0369a1;font-weight:500">
+                <input type="checkbox" class="cx-est-item" value="pagado" style="width:15px;height:15px;cursor:pointer" onchange="toggleEstadoItem()">
+                💸 Pagado
+              </label>
+            </div>
           </div>
           <div class="field">
             <label>Período</label>
@@ -1191,17 +1210,34 @@ function toggleFechasCustom(val) {
   el.style.display = val === 'rango' ? 'grid' : 'none';
 }
 
+function toggleEstadoTodos(cb) {
+  const items = document.querySelectorAll('.cx-est-item');
+  if (cb.checked) {
+    items.forEach(i => i.checked = false);
+  }
+}
+
+function toggleEstadoItem() {
+  const items = document.querySelectorAll('.cx-est-item');
+  const anyChecked = [...items].some(i => i.checked);
+  document.getElementById('cx-est-todos').checked = !anyChecked;
+}
+
 function exportarCustom() {
   const periodo = document.getElementById('cx-periodo').value;
   const agente  = document.getElementById('cx-agente').value;
-  const estado  = document.getElementById('cx-estado').value;
   const tickets = document.getElementById('cx-inc-tickets').checked;
   const transf  = document.getElementById('cx-inc-transf').checked;
   const sem     = document.getElementById('cx-inc-sem').checked;
 
+  // Recolectar estados seleccionados
+  const todosMarcado = document.getElementById('cx-est-todos').checked;
+  const estadosSeleccionados = todosMarcado ? [] :
+    [...document.querySelectorAll('.cx-est-item:checked')].map(i => i.value);
+
   let params = new URLSearchParams();
-  if (agente)  params.append('agente_id', agente);
-  if (estado)  params.append('estado', estado);
+  if (agente) params.append('agente_id', agente);
+  estadosSeleccionados.forEach(e => params.append('estado', e));
   params.append('incluir_tickets', tickets);
   params.append('incluir_transferencias', transf);
   params.append('incluir_semanal', sem);
