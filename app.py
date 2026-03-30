@@ -712,11 +712,11 @@ def exportar_excel_custom(
         if agente_id:
             q += f" AND t.agente_id={PH}"; params.append(agente_id)
         if estado:
-            if len(estado) == 1:
-                q += f" AND t.estado={PH}"; params.append(estado[0])
-            else:
-                placeholders = ",".join([PH] * len(estado))
-                q += f" AND t.estado IN ({placeholders})"; params.extend(estado)
+            # Normalizar: puede llegar como str o list dependiendo de FastAPI/querystring
+            if isinstance(estado, str):
+                estado = [estado]
+            placeholders = ",".join([PH] * len(estado))
+            q += f" AND t.estado IN ({placeholders})"; params.extend(estado)
         if anio:
             q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
         if mes:
@@ -736,7 +736,9 @@ def exportar_excel_custom(
     partes = []
     if anio and mes:  partes.append(f"{calendar.month_name[mes].upper()} {anio}")
     elif anio:        partes.append(str(anio))
-    if estado:        partes.append(", ".join(e.upper() for e in estado))
+    if estado:
+        if isinstance(estado, str): estado = [estado]
+        partes.append(", ".join(e.upper() for e in estado))
     if desde or hasta:
         partes.append(f"{desde or ''} al {hasta or ''}")
     titulo_filtro = " — ".join(partes) if partes else "TODOS LOS REGISTROS"
