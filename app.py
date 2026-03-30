@@ -412,11 +412,15 @@ def resumen(anio: int, mes: int):
         cur.execute(f"""
             SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
                 COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
-                COALESCE(SUM(CASE WHEN t.estado IN ('aprobado','pagado') THEN t.valor_aprobado END), 0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
                 COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END), 0) as total_pagado,
                 COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
-                COUNT(CASE WHEN t.estado='pendiente' THEN 1 END)                                as cant_pendientes,
-                COUNT(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN 1 END)           as cant_aprobados
+                COUNT(CASE WHEN t.estado='pendiente'    THEN 1 END) as cant_pendientes,
+                COUNT(CASE WHEN t.estado='aprobado'     THEN 1 END) as cant_aprobados,
+                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
+                COUNT(CASE WHEN t.estado='pagado'       THEN 1 END) as cant_pagados,
+                COUNT(CASE WHEN t.estado='rechazado'    THEN 1 END) as cant_rechazados
             FROM agentes a
             LEFT JOIN tickets t ON a.id = t.agente_id
                 AND {_year_filter('t.fecha_gasto')}
@@ -435,7 +439,7 @@ def resumen(anio: int, mes: int):
             tope = d["tope_mensual"]
             if ov and ov.get("tope_override") is not None:
                 tope = ov["tope_override"]
-            subtotal = d["total_aprobado"] + d["total_debito"]
+            subtotal = d["total_aprobado"] + d["total_debito"] + d["total_pagado"]
             d["tope_efectivo"] = tope
             d["a_transferir"]  = min(subtotal, tope) if tope > 0 else subtotal
             d["excedente"]     = max(0, subtotal - tope) if tope > 0 else 0
