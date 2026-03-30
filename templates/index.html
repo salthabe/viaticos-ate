@@ -603,9 +603,10 @@ async function loadAll() {
 async function loadResumen() {
   if (state.dashVista === 'mes') {
     state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+  } else if (state.dashVista === 'anio') {
+    state.resumen = await api('GET', `/resumen/agrupado?anio=${state.anio}`);
   } else {
-    // Para anio/todo: cargar tickets y agrupar en el frontend
-    state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+    state.resumen = await api('GET', '/resumen/agrupado');
   }
 }
 
@@ -730,14 +731,16 @@ async function renderDashboard() {
   const totalAprobado  = state.resumen.reduce((s, a) => s + a.total_aprobado + a.total_debito, 0);
   const totalPagado    = state.resumen.reduce((s, a) => s + (a.total_pagado||0), 0);
   const totalRechazado = state.resumen.reduce((s, a) => s + a.total_rechazado, 0);
-  const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
+  const totalTransferir = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito + (a.total_pagado||0)), 0);
   const cantAgentes = state.resumen.filter(a => (a.total_aprobado + a.total_debito + (a.total_pagado||0)) > 0 || a.cant_pendientes > 0).length;
 
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
-  const periodoLabel = MESES[state.mes-1] + ' ' + state.anio;
+  const periodoLabel = state.dashVista === 'todo' ? 'Histórico completo' :
+    state.dashVista === 'anio' ? 'Año ' + state.anio :
+    MESES[state.mes-1] + ' ' + state.anio;
 
   document.getElementById('content').innerHTML = `
     ${periodBar()}
@@ -768,8 +771,16 @@ async function renderDashboard() {
 
     <!-- Resumen por agente -->
     <div class="card" style="margin-bottom:24px">
-      <div class="card-header">
-        <span class="card-title">Resumen por Agente — ${periodoLabel}</span>
+      <div class="card-header" style="flex-wrap:wrap;gap:8px">
+        <span class="card-title">Resumen por Agente</span>
+        <div style="display:flex;gap:6px;align-items:center;flex:1;flex-wrap:wrap">
+          <button class="filter-chip ${state.dashVista==='mes'?'active':''}" style="font-size:11.5px;padding:3px 10px"
+            onclick="setDashVista('mes')">${MESES[state.mes-1].slice(0,3)} ${state.anio}</button>
+          <button class="filter-chip ${state.dashVista==='anio'?'active':''}" style="font-size:11.5px;padding:3px 10px"
+            onclick="setDashVista('anio')">📆 ${state.anio}</button>
+          <button class="filter-chip ${state.dashVista==='todo'?'active':''}" style="font-size:11.5px;padding:3px 10px"
+            onclick="setDashVista('todo')">📚 Histórico</button>
+        </div>
         <button class="btn btn-ghost btn-sm" onclick="navigate('exportar')">📥 Exportar</button>
       </div>
       <div class="card-body" style="overflow-x:auto">
@@ -783,8 +794,8 @@ async function renderDashboard() {
               <th style="text-align:center">✅ Aprobado</th>
               <th style="text-align:center">💸 Pagado</th>
               <th style="text-align:center">❌ Rech.</th>
-              <th>Tope</th>
-              <th>A Transferir</th>
+              ${state.dashVista === 'mes' ? '<th>Tope</th>' : ''}
+              <th>Total acumulado</th>
               <th></th>
             </tr>
           </thead>
@@ -818,10 +829,10 @@ async function renderDashboard() {
                     ? `<span style="color:#dc2626;font-weight:600">${a.cant_rechazados}</span>`
                     : '<span style="color:var(--gray400)">—</span>'}
                 </td>
-                <td>
+                ${state.dashVista === 'mes' ? `<td>
                   <span class="tope-badge">🎯 ${a.tope_efectivo > 0 ? fmt(a.tope_efectivo) : 'Sin tope'}</span>
                   ${a.tope_efectivo > 0 ? `<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>` : ''}
-                </td>
+                </td>` : ''}
                 <td class="td-amount" style="font-weight:700;color:var(--navy)">${fmt(a.a_transferir)}</td>
                 <td>
                   <button class="btn btn-ghost btn-sm" onclick="verTicketsAgente(${a.id})">Ver tickets</button>
@@ -834,7 +845,7 @@ async function renderDashboard() {
               <td style="text-align:center;font-weight:700;color:#16a34a">${fmt(totalAprobado)}</td>
               <td style="text-align:center;font-weight:700;color:#0369a1">${fmt(totalPagado)}</td>
               <td style="text-align:center;font-weight:700;color:#dc2626">${state.resumen.reduce((s,a)=>s+(a.cant_rechazados||0),0)}</td>
-              <td></td>
+              ${state.dashVista === 'mes' ? '<td></td>' : ''}
               <td class="td-amount" style="font-weight:700">${fmt(totalTransferir)}</td>
               <td></td>
             </tr>
@@ -977,6 +988,12 @@ async function limpiarMesesTicket() {
   state.ticketVista = 'mes';
   await loadTickets();
   renderTickets();
+}
+
+async function setDashVista(vista) {
+  state.dashVista = vista;
+  await loadResumen();
+  renderDashboard();
 }
 
 async function setTicketVista(vista) {
@@ -1257,7 +1274,7 @@ function renderExportar() {
     </div>`;
 
   loadResumen().then(() => {
-    const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
+    const totalTransferir = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito + (a.total_pagado||0)), 0);
     document.getElementById('export-preview').innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
         <div style="text-align:center;padding:16px;background:var(--ice);border-radius:var(--radius-sm)">
