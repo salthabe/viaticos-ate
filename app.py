@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import os
 from datetime import datetime
 import calendar
@@ -688,7 +688,7 @@ def exportar_excel_custom(
     anio: Optional[int] = None,
     mes: Optional[int] = None,
     agente_id: Optional[int] = None,
-    estado: Optional[str] = None,
+    estado: Optional[List[str]] = Query(default=None),
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
     incluir_transferencias: bool = True,
@@ -712,7 +712,11 @@ def exportar_excel_custom(
         if agente_id:
             q += f" AND t.agente_id={PH}"; params.append(agente_id)
         if estado:
-            q += f" AND t.estado={PH}"; params.append(estado)
+            if len(estado) == 1:
+                q += f" AND t.estado={PH}"; params.append(estado[0])
+            else:
+                placeholders = ",".join([PH] * len(estado))
+                q += f" AND t.estado IN ({placeholders})"; params.extend(estado)
         if anio:
             q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
         if mes:
