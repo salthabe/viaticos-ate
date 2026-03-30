@@ -572,7 +572,8 @@ const state = {
   resumen: [],
   ticketFilter: 'todos',
   ticketSearch: '',
-  ticketMeses: []  // vacío = solo el mes actual del periodBar
+  ticketMeses: [],  // vacío = solo el mes actual del periodBar
+  ticketVista: 'mes'  // 'mes' | 'anio' | 'todo'
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -603,16 +604,22 @@ async function loadResumen() {
 }
 
 async function loadTickets() {
-  if (state.ticketMeses.length === 0) {
-    // modo normal: solo el mes del período
-    state.tickets = await api('GET', `/tickets?anio=${state.anio}&mes=${state.mes}`);
-  } else {
+  if (state.ticketVista === 'todo') {
+    state.tickets = await api('GET', '/tickets');
+    state.ticketMeses = [];
+  } else if (state.ticketVista === 'anio') {
+    state.tickets = await api('GET', `/tickets?anio=${state.anio}`);
+    state.ticketMeses = [];
+  } else if (state.ticketMeses.length > 0) {
     // multi-mes: traer todos los del año y filtrar por meses seleccionados
     const all = await api('GET', `/tickets?anio=${state.anio}`);
     state.tickets = all.filter(t => {
       const m = parseInt((t.fecha_gasto || '').slice(5, 7));
       return state.ticketMeses.includes(m);
     });
+  } else {
+    // modo normal: solo el mes del período
+    state.tickets = await api('GET', `/tickets?anio=${state.anio}&mes=${state.mes}`);
   }
 }
 
@@ -857,14 +864,26 @@ async function renderTickets() {
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap">
         <div style="display:flex;gap:6px;align-items:center;background:var(--ice);border-radius:8px;padding:6px 10px;flex-wrap:wrap">
-          <span style="font-size:12px;color:var(--gray500);font-weight:600;white-space:nowrap">📅 Meses:</span>
+          <span style="font-size:12px;color:var(--gray500);font-weight:600;white-space:nowrap">📅 Ver:</span>
+          <button class="filter-chip ${state.ticketVista==='mes' && state.ticketMeses.length===0 ? 'active' : ''}"
+            style="padding:3px 9px;font-size:11.5px" onclick="setTicketVista('mes')">
+            ${MESES[state.mes-1].slice(0,3)}
+          </button>
+          <button class="filter-chip ${state.ticketVista==='anio' ? 'active' : ''}"
+            style="padding:3px 9px;font-size:11.5px" onclick="setTicketVista('anio')">
+            📆 ${state.anio}
+          </button>
+          <button class="filter-chip ${state.ticketVista==='todo' ? 'active' : ''}"
+            style="padding:3px 9px;font-size:11.5px" onclick="setTicketVista('todo')">
+            📚 Todo
+          </button>
+          <span style="width:1px;background:var(--gray200);height:16px;margin:0 2px"></span>
           ${MESES.map((m, i) => {
             const num = i + 1;
             const active = state.ticketMeses.includes(num);
-            return `<button class="filter-chip ${active ? 'active' : ''}" style="padding:3px 9px;font-size:11.5px"
+            return `<button class="filter-chip ${active ? 'active' : ''}" style="padding:3px 9px;font-size:11px;opacity:${state.ticketVista==='todo'||state.ticketVista==='anio'?'0.4':'1'}"
               onclick="toggleMesTicket(${num})">${m.slice(0,3)}</button>`;
           }).join('')}
-          ${state.ticketMeses.length > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 7px" onclick="limpiarMesesTicket()">✕ Solo ${MESES[state.mes-1].slice(0,3)}</button>` : ''}
         </div>
         <input class="search-input" placeholder="🔍 Buscar agente..." value="${state.ticketSearch}"
           style="margin:0;width:180px"
@@ -873,10 +892,12 @@ async function renderTickets() {
     </div>
 
     <div style="font-size:12px;color:var(--gray500);padding:4px 2px">
-      ${state.ticketMeses.length > 0
-        ? `Mostrando: <strong>${state.ticketMeses.map(m => MESES[m-1]).join(', ')} ${state.anio}</strong>`
-        : `Mostrando: <strong>${MESES[state.mes-1]} ${state.anio}</strong>`}
-      — ${filterTickets().length} ticket(s) encontrado(s)
+      Mostrando: <strong>${
+        state.ticketVista === 'todo' ? 'Todo el historial' :
+        state.ticketVista === 'anio' ? `Año ${state.anio}` :
+        state.ticketMeses.length > 0 ? state.ticketMeses.map(m => MESES[m-1]).join(', ') + ' ' + state.anio :
+        MESES[state.mes-1] + ' ' + state.anio
+      }</strong> — ${filterTickets().length} ticket(s)
     </div>
 
     <div class="card" id="tickets-card">
@@ -910,6 +931,14 @@ async function toggleMesTicket(mes) {
 }
 
 async function limpiarMesesTicket() {
+  state.ticketMeses = [];
+  state.ticketVista = 'mes';
+  await loadTickets();
+  renderTickets();
+}
+
+async function setTicketVista(vista) {
+  state.ticketVista = vista;
   state.ticketMeses = [];
   await loadTickets();
   renderTickets();
