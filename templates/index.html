@@ -573,7 +573,8 @@ const state = {
   ticketFilter: 'todos',
   ticketSearch: '',
   ticketMeses: [],  // vacío = solo el mes actual del periodBar
-  ticketVista: 'mes'  // 'mes' | 'anio' | 'todo'
+  ticketVista: 'mes',  // 'mes' | 'anio' | 'todo'
+  dashVista: 'mes'   // 'mes' | 'anio' | 'todo'
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -600,7 +601,12 @@ async function loadAll() {
 }
 
 async function loadResumen() {
-  state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+  if (state.dashVista === 'mes') {
+    state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+  } else {
+    // Para anio/todo: cargar tickets y agrupar en el frontend
+    state.resumen = await api('GET', `/resumen?anio=${state.anio}&mes=${state.mes}`);
+  }
 }
 
 async function loadTickets() {
@@ -715,71 +721,103 @@ async function changePeriod(mes, anio) {
 async function renderDashboard() {
   await Promise.all([loadResumen(), loadTickets()]);
 
-  const totalPendiente = state.tickets.filter(t => t.estado === 'pendiente').reduce((s, t) => s + t.valor, 0);
-  const totalAprobado = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito), 0);
-  const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
-  const totalRechazado = state.resumen.reduce((s, a) => s + a.total_rechazado, 0);
-  const cantPendientes = state.tickets.filter(t => t.estado === 'pendiente').length;
-  const cantAgentes = state.resumen.filter(a => a.cant_aprobados > 0 || a.cant_pendientes > 0).length;
+  // Calcular totales según vista
+  const allTickets = state.tickets;
+  const pendientes = allTickets.filter(t => t.estado === 'pendiente');
+  const cantPendientes = pendientes.length;
+  const totalPendiente = pendientes.reduce((s, t) => s + t.valor, 0);
 
-  // Topbar action
+  const totalAprobado  = state.resumen.reduce((s, a) => s + a.total_aprobado + a.total_debito, 0);
+  const totalPagado    = state.resumen.reduce((s, a) => s + (a.total_pagado||0), 0);
+  const totalRechazado = state.resumen.reduce((s, a) => s + a.total_rechazado, 0);
+  const totalTransferir = state.resumen.reduce((s, a) => s + a.a_transferir, 0);
+  const cantAgentes = state.resumen.filter(a => (a.total_aprobado + a.total_debito + (a.total_pagado||0)) > 0 || a.cant_pendientes > 0).length;
+
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
+  const periodoLabel = MESES[state.mes-1] + ' ' + state.anio;
+
   document.getElementById('content').innerHTML = `
     ${periodBar()}
 
+    <!-- Stats grid -->
     <div class="stats-grid">
       <div class="stat-card yellow">
-        <div class="label">Pendiente Revisión</div>
+        <div class="label">⏳ Pendiente Revisión</div>
         <div class="value">${cantPendientes}</div>
-        <div class="sub">${fmt(totalPendiente)} en tickets</div>
+        <div class="sub">${fmt(totalPendiente)} presentado</div>
       </div>
       <div class="stat-card green">
-        <div class="label">Total Aprobado</div>
+        <div class="label">✅ Aprobado (sin pagar)</div>
         <div class="value">${fmt(totalAprobado)}</div>
-        <div class="sub">${state.resumen.reduce((s,a) => s + a.cant_aprobados, 0)} tickets aprobados</div>
+        <div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_aprobados||0)+(a.cant_debito||0),0)} tickets · pendiente de pago</div>
       </div>
-      <div class="stat-card">
-        <div class="label">A Transferir</div>
-        <div class="value" style="color:var(--navy)">${fmt(totalTransferir)}</div>
-        <div class="sub">${cantAgentes} agentes</div>
+      <div class="stat-card" style="--stat-color:var(--sky)">
+        <div class="label">💸 Ya Pagado</div>
+        <div class="value" style="color:#0369a1">${fmt(totalPagado)}</div>
+        <div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_pagados||0),0)} tickets pagados</div>
       </div>
       <div class="stat-card red">
-        <div class="label">Total Rechazado</div>
+        <div class="label">❌ Rechazado</div>
         <div class="value">${fmt(totalRechazado)}</div>
-        <div class="sub">Débitos aplicados</div>
+        <div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_rechazados||0),0)} tickets</div>
       </div>
     </div>
 
+    <!-- Resumen por agente -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header">
-        <span class="card-title">Resumen por Agente — ${MESES[state.mes-1]} ${state.anio}</span>
+        <span class="card-title">Resumen por Agente — ${periodoLabel}</span>
         <button class="btn btn-ghost btn-sm" onclick="navigate('exportar')">📥 Exportar</button>
       </div>
-      <div class="card-body">
-        ${state.resumen.length === 0 ? '<div class="empty-state"><div class="emoji">📋</div><p>Sin datos para este período</p></div>' : `
-        <table>
+      <div class="card-body" style="overflow-x:auto">
+        ${state.resumen.length === 0
+          ? '<div class="empty-state"><div class="emoji">📋</div><p>Sin datos para este período</p></div>'
+          : `<table>
           <thead>
             <tr>
               <th>Agente</th>
-              <th>Pendiente</th>
-              <th>Aprobado</th>
+              <th style="text-align:center">⏳ Pend.</th>
+              <th style="text-align:center">✅ Aprobado</th>
+              <th style="text-align:center">💸 Pagado</th>
+              <th style="text-align:center">❌ Rech.</th>
               <th>Tope</th>
               <th>A Transferir</th>
-              <th>Acciones</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             ${state.resumen.map(a => {
-              const aprobado = a.total_aprobado + a.total_debito;
-              const pct = a.tope_efectivo > 0 ? Math.min(100, (aprobado / a.tope_efectivo) * 100) : 0;
+              const aprobSinPagar = a.total_aprobado + a.total_debito;
+              const pagado = a.total_pagado || 0;
+              const totalEfectivo = aprobSinPagar + pagado;
+              const pct = a.tope_efectivo > 0 ? Math.min(100, (totalEfectivo / a.tope_efectivo) * 100) : 0;
+              const cantAprobSinPagar = (a.cant_aprobados||0) + (a.cant_debito||0);
               return `
               <tr>
                 <td class="td-name">${a.nombre}</td>
-                <td><span class="badge badge-pendiente">${a.cant_pendientes} tickets</span></td>
-                <td class="td-amount">${fmt(aprobado)}</td>
+                <td style="text-align:center">
+                  ${a.cant_pendientes > 0
+                    ? `<span class="badge badge-pendiente">${a.cant_pendientes}</span>`
+                    : '<span style="color:var(--gray400)">—</span>'}
+                </td>
+                <td style="text-align:center">
+                  ${cantAprobSinPagar > 0
+                    ? `<span style="color:#16a34a;font-weight:600">${fmt(aprobSinPagar)}<br><small style="font-weight:400;color:var(--gray500)">${cantAprobSinPagar} tkt</small></span>`
+                    : '<span style="color:var(--gray400)">—</span>'}
+                </td>
+                <td style="text-align:center">
+                  ${pagado > 0
+                    ? `<span style="color:#0369a1;font-weight:600">${fmt(pagado)}<br><small style="font-weight:400;color:var(--gray500)">${a.cant_pagados||0} tkt</small></span>`
+                    : '<span style="color:var(--gray400)">—</span>'}
+                </td>
+                <td style="text-align:center">
+                  ${(a.cant_rechazados||0) > 0
+                    ? `<span style="color:#dc2626;font-weight:600">${a.cant_rechazados}</span>`
+                    : '<span style="color:var(--gray400)">—</span>'}
+                </td>
                 <td>
                   <span class="tope-badge">🎯 ${a.tope_efectivo > 0 ? fmt(a.tope_efectivo) : 'Sin tope'}</span>
                   ${a.tope_efectivo > 0 ? `<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>` : ''}
@@ -788,14 +826,16 @@ async function renderDashboard() {
                 <td>
                   <button class="btn btn-ghost btn-sm" onclick="verTicketsAgente(${a.id})">Ver tickets</button>
                 </td>
-              </tr>`
+              </tr>`;
             }).join('')}
             <tr class="agente-row-total">
-              <td>TOTAL</td>
+              <td><strong>TOTAL</strong></td>
+              <td style="text-align:center"><span class="badge badge-pendiente">${state.resumen.reduce((s,a)=>s+(a.cant_pendientes||0),0)}</span></td>
+              <td style="text-align:center;font-weight:700;color:#16a34a">${fmt(totalAprobado)}</td>
+              <td style="text-align:center;font-weight:700;color:#0369a1">${fmt(totalPagado)}</td>
+              <td style="text-align:center;font-weight:700;color:#dc2626">${state.resumen.reduce((s,a)=>s+(a.cant_rechazados||0),0)}</td>
               <td></td>
-              <td class="td-amount">${fmt(state.resumen.reduce((s,a)=>s+(a.total_aprobado+a.total_debito),0))}</td>
-              <td></td>
-              <td class="td-amount">${fmt(totalTransferir)}</td>
+              <td class="td-amount" style="font-weight:700">${fmt(totalTransferir)}</td>
               <td></td>
             </tr>
           </tbody>
@@ -803,6 +843,7 @@ async function renderDashboard() {
       </div>
     </div>
 
+    <!-- Pendientes de revisión -->
     ${cantPendientes > 0 ? `
     <div class="card">
       <div class="card-header">
@@ -815,7 +856,7 @@ async function renderDashboard() {
             <tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Valor</th><th>Acciones</th></tr>
           </thead>
           <tbody>
-            ${state.tickets.filter(t => t.estado === 'pendiente').map(t => `
+            ${pendientes.map(t => `
             <tr>
               <td class="td-name">${t.agente_nombre}</td>
               <td>${formatDate(t.fecha_gasto)}</td>
@@ -835,6 +876,7 @@ async function renderDashboard() {
     </div>` : ''}
   `;
 }
+
 
 // ══════════════════════════════════════════════════════════
 //  TICKETS
