@@ -736,7 +736,7 @@ def exportar_excel_custom(
     partes = []
     if anio and mes:  partes.append(f"{calendar.month_name[mes].upper()} {anio}")
     elif anio:        partes.append(str(anio))
-    if estado:        partes.append(estado.upper())
+    if estado:        partes.append(", ".join(e.upper() for e in estado))
     if desde or hasta:
         partes.append(f"{desde or ''} al {hasta or ''}")
     titulo_filtro = " — ".join(partes) if partes else "TODOS LOS REGISTROS"
