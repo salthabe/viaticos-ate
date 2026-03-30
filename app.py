@@ -1945,3 +1945,38 @@ def exportar_actas_excel(anio: Optional[int] = None):
     wb.save(path)
     return FileResponse(path, filename=filename,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/resumen/agrupado")
+def resumen_agrupado(anio: Optional[int] = None):
+    """Resumen por agente para año completo o todo el historial. Sin topes (no aplica)."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = f"""
+            SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
+                COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END), 0) as total_pagado,
+                COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
+                COUNT(CASE WHEN t.estado='pendiente'      THEN 1 END) as cant_pendientes,
+                COUNT(CASE WHEN t.estado='aprobado'       THEN 1 END) as cant_aprobados,
+                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
+                COUNT(CASE WHEN t.estado='pagado'         THEN 1 END) as cant_pagados,
+                COUNT(CASE WHEN t.estado='rechazado'      THEN 1 END) as cant_rechazados
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id = t.agente_id"""
+        params = []
+        if anio:
+            q += f" AND {_year_filter('t.fecha_gasto')}"
+            params.append(_yp(anio))
+        q += " WHERE a.activo = 1 GROUP BY a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit ORDER BY a.nombre"
+        cur.execute(q, params)
+        rows = _rows(cur)
+        result = []
+        for d in rows:
+            subtotal = d["total_aprobado"] + d["total_debito"] + d["total_pagado"]
+            d["tope_efectivo"] = 0  # no aplica tope en vista anual/histórica
+            d["a_transferir"]  = subtotal
+            d["excedente"]     = 0
+            result.append(d)
+        return result
