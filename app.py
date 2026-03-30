@@ -861,7 +861,7 @@ def exportar_excel_custom(
     fname_parts = ["export_ATE"]
     if anio: fname_parts.append(str(anio))
     if mes:  fname_parts.append(f"{mes:02d}")
-    if estado: fname_parts.append(estado)
+    if estado: fname_parts.append("_".join(estado) if isinstance(estado, list) else estado)
     filename = "_".join(fname_parts) + ".xlsx"
     path = os.path.join(EXPORTS_DIR, filename)
     wb.save(path)
