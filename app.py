@@ -84,6 +84,7 @@ if USE_PG:
                     fecha_gasto DATE NOT NULL, categoria_id INTEGER REFERENCES categorias(id),
                     comprobante TEXT, descripcion TEXT, valor REAL NOT NULL,
                     estado TEXT DEFAULT 'pendiente', motivo_rechazo TEXT, valor_aprobado REAL,
+                    periodo_pago_id INTEGER REFERENCES periodos_pago(id),
                     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     revisado_en TIMESTAMP, revisado_por TEXT
                 );
@@ -119,6 +120,16 @@ if USE_PG:
                     cerrado_por TEXT,
                     cerrado_en TIMESTAMP,
                     UNIQUE(anio, mes)
+                );
+                CREATE TABLE IF NOT EXISTS periodos_pago (
+                    id SERIAL PRIMARY KEY,
+                    numero INTEGER NOT NULL,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT,
+                    estado TEXT DEFAULT 'abierto',
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    cerrado_en TIMESTAMP,
+                    cerrado_por TEXT
                 );
                 CREATE TABLE IF NOT EXISTS actas (
                     id SERIAL PRIMARY KEY,
@@ -192,6 +203,7 @@ else:
                     fecha_gasto TEXT NOT NULL, categoria_id INTEGER REFERENCES categorias(id),
                     comprobante TEXT, descripcion TEXT, valor REAL NOT NULL,
                     estado TEXT DEFAULT 'pendiente', motivo_rechazo TEXT, valor_aprobado REAL,
+                    periodo_pago_id INTEGER REFERENCES periodos_pago(id),
                     creado_en TEXT DEFAULT CURRENT_TIMESTAMP, revisado_en TEXT, revisado_por TEXT
                 );
                 CREATE TABLE IF NOT EXISTS periodos (
@@ -226,6 +238,16 @@ else:
                     cerrado_por TEXT,
                     cerrado_en TEXT,
                     UNIQUE(anio, mes)
+                );
+                CREATE TABLE IF NOT EXISTS periodos_pago (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    numero INTEGER NOT NULL,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT,
+                    estado TEXT DEFAULT 'abierto',
+                    creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+                    cerrado_en TEXT,
+                    cerrado_por TEXT
                 );
                 CREATE TABLE IF NOT EXISTS actas (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,13 +350,16 @@ def obtener_agente(agente_id: int):
 
 @app.get("/api/tickets")
 def listar_tickets(agente_id: Optional[int] = None, estado: Optional[str] = None,
-                   anio: Optional[int] = None, mes: Optional[int] = None):
+                   anio: Optional[int] = None, mes: Optional[int] = None,
+                   periodo_pago_id: Optional[int] = None):
     with get_db() as conn:
         cur = conn.cursor()
-        q = """SELECT t.*, a.nombre as agente_nombre, c.nombre as categoria_nombre
+        q = """SELECT t.*, a.nombre as agente_nombre, c.nombre as categoria_nombre,
+                      pp.nombre as periodo_pago_nombre, pp.numero as periodo_pago_numero
                FROM tickets t
                LEFT JOIN agentes a ON t.agente_id = a.id
                LEFT JOIN categorias c ON t.categoria_id = c.id
+               LEFT JOIN periodos_pago pp ON t.periodo_pago_id = pp.id
                WHERE 1=1"""
         params = []
         if agente_id:
@@ -345,6 +370,8 @@ def listar_tickets(agente_id: Optional[int] = None, estado: Optional[str] = None
             q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
         if mes:
             q += f" AND {_month_filter('t.fecha_gasto')}"; params.append(_mp(mes))
+        if periodo_pago_id:
+            q += f" AND t.periodo_pago_id={PH}"; params.append(periodo_pago_id)
         q += " ORDER BY t.fecha_gasto DESC"
         cur.execute(q, params)
         rows = _rows(cur)
@@ -356,10 +383,13 @@ def listar_tickets(agente_id: Optional[int] = None, estado: Optional[str] = None
 @app.post("/api/tickets")
 def crear_ticket(data: TicketCreate):
     with get_db() as conn:
+        # Auto-asignar al período de pago abierto
+        pp = _get_periodo_abierto(conn)
+        pp_id = pp["id"] if pp else None
         new_id = _insert(conn,
-            f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor) VALUES ({PH},{PH},{PH},{PH},{PH},{PH})",
-            (data.agente_id, data.fecha_gasto, data.categoria_id, data.comprobante, data.descripcion, data.valor))
-        return {"id": new_id, "mensaje": "Ticket creado"}
+            f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor,periodo_pago_id) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH})",
+            (data.agente_id, data.fecha_gasto, data.categoria_id, data.comprobante, data.descripcion, data.valor, pp_id))
+        return {"id": new_id, "mensaje": "Ticket creado", "periodo_pago_id": pp_id}
 
 @app.put("/api/tickets/{ticket_id}/revision")
 def revisar_ticket(ticket_id: int, data: TicketRevision):
@@ -1980,3 +2010,232 @@ def resumen_agrupado(anio: Optional[int] = None):
             d["excedente"]     = 0
             result.append(d)
         return result
+
+# ── PERIODOS DE PAGO ──────────────────────────────────────────────────────────
+
+class PeriodoPagoCreate(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+
+class PeriodoPagoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+
+def _get_periodo_abierto(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM periodos_pago WHERE estado='abierto' ORDER BY numero DESC LIMIT 1")
+    return _row(cur)
+
+def _periodo_to_dict(r):
+    d = dict(r)
+    for k in ("creado_en", "cerrado_en"):
+        if d.get(k) and not isinstance(d[k], str):
+            d[k] = d[k].isoformat()
+    return d
+
+@app.get("/api/periodos_pago")
+def listar_periodos_pago():
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT pp.*,
+                COUNT(t.id) as total_tickets,
+                COALESCE(SUM(CASE WHEN t.estado='pendiente' THEN 1 END),0) as cant_pendientes,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado' THEN 1 END),0) as cant_aprobados,
+                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN 1 END),0) as cant_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado' THEN 1 END),0) as cant_pagados,
+                COALESCE(SUM(CASE WHEN t.estado='rechazado' THEN 1 END),0) as cant_rechazados,
+                COALESCE(SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado END),0) as total_aprobado
+            FROM periodos_pago pp
+            LEFT JOIN tickets t ON t.periodo_pago_id = pp.id
+            GROUP BY pp.id ORDER BY pp.numero DESC
+        """)
+        return [_periodo_to_dict(r) for r in _rows(cur)]
+
+@app.get("/api/periodos_pago/activo")
+def get_periodo_activo():
+    with get_db() as conn:
+        pp = _get_periodo_abierto(conn)
+        return _periodo_to_dict(pp) if pp else None
+
+@app.post("/api/periodos_pago")
+def crear_periodo_pago(data: PeriodoPagoCreate):
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Generar número correlativo
+        cur.execute("SELECT COALESCE(MAX(numero),0)+1 as n FROM periodos_pago")
+        numero = _row(cur)["n"]
+        if USE_PG:
+            new_id = _insert(conn,
+                "INSERT INTO periodos_pago (numero, nombre, descripcion, estado)",
+                (numero, data.nombre, data.descripcion, 'abierto'))
+        else:
+            new_id = _insert(conn,
+                "INSERT INTO periodos_pago (numero, nombre, descripcion, estado) VALUES (?,?,?,?)",
+                (numero, data.nombre, data.descripcion, 'abierto'))
+    return {"id": new_id, "numero": numero, "mensaje": f"Período {numero:03d} creado"}
+
+@app.put("/api/periodos_pago/{pp_id}")
+def actualizar_periodo_pago(pp_id: int, data: PeriodoPagoUpdate):
+    fields = {k: v for k, v in data.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "Nada que actualizar")
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_PG:
+            set_clause = ", ".join(f"{k}=%s" for k in fields)
+            cur.execute(f"UPDATE periodos_pago SET {set_clause} WHERE id=%s", list(fields.values()) + [pp_id])
+        else:
+            set_clause = ", ".join(f"{k}=?" for k in fields)
+            cur.execute(f"UPDATE periodos_pago SET {set_clause} WHERE id=?", list(fields.values()) + [pp_id])
+    return {"mensaje": "Período actualizado"}
+
+@app.post("/api/periodos_pago/{pp_id}/cerrar")
+def cerrar_periodo_pago(pp_id: int, usuario: Optional[str] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Verificar pendientes
+        cur.execute(f"SELECT COUNT(*) as n FROM tickets WHERE periodo_pago_id={PH} AND estado='pendiente'", (pp_id,))
+        row = _row(cur)
+        pendientes = row["n"] if row else 0
+        if pendientes > 0:
+            raise HTTPException(409, f"Hay {pendientes} ticket(s) pendientes en este período. Revisalos antes de cerrar.")
+        cur.execute(f"UPDATE periodos_pago SET estado='cerrado', cerrado_por={PH}, cerrado_en=CURRENT_TIMESTAMP WHERE id={PH}",
+                    (usuario, pp_id))
+    return {"mensaje": "Período cerrado correctamente"}
+
+@app.post("/api/periodos_pago/{pp_id}/reabrir")
+def reabrir_periodo_pago(pp_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE periodos_pago SET estado='abierto', cerrado_en=NULL, cerrado_por=NULL WHERE id={PH}", (pp_id,))
+    return {"mensaje": "Período reabierto"}
+
+@app.get("/api/periodos_pago/{pp_id}/resumen")
+def resumen_periodo_pago(pp_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
+                COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END),0) as total_pendiente,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END),0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END),0) as total_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END),0) as total_pagado,
+                COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END),0) as total_rechazado,
+                COUNT(CASE WHEN t.estado='pendiente'      THEN 1 END) as cant_pendientes,
+                COUNT(CASE WHEN t.estado='aprobado'       THEN 1 END) as cant_aprobados,
+                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
+                COUNT(CASE WHEN t.estado='pagado'         THEN 1 END) as cant_pagados,
+                COUNT(CASE WHEN t.estado='rechazado'      THEN 1 END) as cant_rechazados
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id = t.agente_id AND t.periodo_pago_id = {PH}
+            WHERE a.activo = 1
+            GROUP BY a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit
+            ORDER BY a.nombre
+        """, (pp_id,))
+        rows = _rows(cur)
+        result = []
+        for d in rows:
+            subtotal = d["total_aprobado"] + d["total_debito"] + d["total_pagado"]
+            d["tope_efectivo"] = d["tope_mensual"]
+            d["a_transferir"] = min(subtotal, d["tope_mensual"]) if d["tope_mensual"] > 0 else subtotal
+            d["excedente"] = max(0, subtotal - d["tope_mensual"]) if d["tope_mensual"] > 0 else 0
+            result.append(d)
+        return result
+
+@app.get("/api/periodos_pago/{pp_id}/exportar/excel")
+def exportar_excel_periodo_pago(pp_id: int):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment as XAlign
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM periodos_pago WHERE id={PH}", (pp_id,))
+        pp = _row(cur)
+        if not pp:
+            raise HTTPException(404, "Período no encontrado")
+    nombre_pp = f"{pp['numero']:03d} - {pp['nombre']}"
+    resumen_data = resumen_periodo_pago(pp_id)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT t.*, a.nombre as agente_nombre, c.nombre as categoria_nombre
+            FROM tickets t
+            LEFT JOIN agentes a ON t.agente_id = a.id
+            LEFT JOIN categorias c ON t.categoria_id = c.id
+            WHERE t.periodo_pago_id = {PH}
+            ORDER BY a.nombre, t.fecha_gasto
+        """, (pp_id,))
+        tickets = _rows(cur)
+        for t in tickets:
+            if t.get("fecha_gasto") and not isinstance(t["fecha_gasto"], str):
+                t["fecha_gasto"] = t["fecha_gasto"].strftime("%Y-%m-%d")
+
+    wb = openpyxl.Workbook()
+
+    # Hoja 1: Resumen por agente
+    ws1 = wb.active
+    ws1.title = "Resumen"
+    ws1.merge_cells("A1:H1")
+    ws1["A1"] = f"SINDICATO ATE — PERÍODO {nombre_pp}"
+    ws1["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+    ws1["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws1["A1"].alignment = XAlign(horizontal="center", vertical="center")
+    ws1.row_dimensions[1].height = 28
+    hdrs1 = ["Agente", "CUIT", "CBU", "Banco/Alias", "Aprobado", "Pagado", "Rechazado", "A Transferir"]
+    for c, h in enumerate(hdrs1, 1):
+        cell = ws1.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2d6a9f")
+        cell.alignment = XAlign(horizontal="center")
+    total_transf = 0
+    for ri, a in enumerate(resumen_data, 3):
+        aprobado = a["total_aprobado"] + a["total_debito"]
+        vals = [a["nombre"], a.get("cuit") or "-", a.get("cbu") or "-",
+                a.get("banco") or a.get("alias") or "-",
+                aprobado, a["total_pagado"], a["total_rechazado"], a["a_transferir"]]
+        for c, v in enumerate(vals, 1):
+            cell = ws1.cell(row=ri, column=c, value=v)
+            if c in (5, 6, 7, 8):
+                cell.number_format = '"$"#,##0.00'
+        total_transf += a["a_transferir"]
+    tr = len(resumen_data) + 3
+    ws1.cell(row=tr, column=7, value="TOTAL").font = Font(bold=True)
+    ws1.cell(row=tr, column=8, value=total_transf).number_format = '"$"#,##0.00'
+    ws1.cell(row=tr, column=8).font = Font(bold=True)
+    for col, w in zip("ABCDEFGH", [28, 16, 22, 18, 14, 14, 14, 14]):
+        ws1.column_dimensions[col].width = w
+
+    # Hoja 2: Detalle de tickets
+    ws2 = wb.create_sheet("Detalle")
+    ws2.merge_cells("A1:I1")
+    ws2["A1"] = f"DETALLE DE TICKETS — PERÍODO {nombre_pp}"
+    ws2["A1"].font = Font(bold=True, size=12, color="FFFFFF")
+    ws2["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
+    ws2["A1"].alignment = XAlign(horizontal="center", vertical="center")
+    ws2.row_dimensions[1].height = 26
+    hdrs2 = ["Agente", "Fecha", "Categoría", "Comprobante", "Descripción", "Valor", "Estado", "Aprobado", "Motivo"]
+    for c, h in enumerate(hdrs2, 1):
+        cell = ws2.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2d6a9f")
+    colores = {"aprobado": "D4EDDA", "rechazado": "F8D7DA", "debito_parcial": "FFF3CD",
+               "pendiente": "FFFFFF", "pagado": "E0F2FE"}
+    for ri, t in enumerate(tickets, 3):
+        color = colores.get(t["estado"], "FFFFFF")
+        for c, v in enumerate([
+            t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre", ""),
+            t.get("comprobante", ""), t.get("descripcion", ""), t["valor"],
+            t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo", "")
+        ], 1):
+            cell = ws2.cell(row=ri, column=c, value=v)
+            cell.fill = PatternFill("solid", fgColor=color)
+            if c in (6, 8):
+                cell.number_format = '"$"#,##0.00'
+    for col, w in zip("ABCDEFGHI", [28, 12, 16, 18, 32, 14, 14, 14, 30]):
+        ws2.column_dimensions[col].width = w
+
+    filename = f"periodo_{pp['numero']:03d}_ATE.xlsx"
+    path = os.path.join(EXPORTS_DIR, filename)
+    wb.save(path)
+    return FileResponse(path, filename=filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
