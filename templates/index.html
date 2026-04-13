@@ -526,6 +526,9 @@ tbody td {
       <button class="nav-item" onclick="navigate('topes')">
         <span class="icon">🎯</span> Topes Mensuales
       </button>
+      <button class="nav-item" onclick="navigate('periodos_pago')">
+        <span class="icon">🗂️</span> Períodos de Pago
+      </button>
       <div class="nav-section">Registros</div>
       <button class="nav-item" onclick="navigate('actas')">
         <span class="icon">📋</span> Libro de Actas
@@ -574,7 +577,9 @@ const state = {
   ticketSearch: '',
   ticketMeses: [],  // vacío = solo el mes actual del periodBar
   ticketVista: 'mes',  // 'mes' | 'anio' | 'todo'
-  dashVista: 'mes'   // 'mes' | 'anio' | 'todo'
+  dashVista: 'mes',   // 'mes' | 'anio' | 'todo'
+  filtroPeriodoPago: null,
+  filtroPeriodoPagoNombre: null
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -611,21 +616,22 @@ async function loadResumen() {
 }
 
 async function loadTickets() {
-  if (state.ticketVista === 'todo') {
+  if (state.filtroPeriodoPago) {
+    state.tickets = await api('GET', `/tickets?periodo_pago_id=${state.filtroPeriodoPago}`);
+    state.ticketMeses = [];
+  } else if (state.ticketVista === 'todo') {
     state.tickets = await api('GET', '/tickets');
     state.ticketMeses = [];
   } else if (state.ticketVista === 'anio') {
     state.tickets = await api('GET', `/tickets?anio=${state.anio}`);
     state.ticketMeses = [];
   } else if (state.ticketMeses.length > 0) {
-    // multi-mes: traer todos los del año y filtrar por meses seleccionados
     const all = await api('GET', `/tickets?anio=${state.anio}`);
     state.tickets = all.filter(t => {
       const m = parseInt((t.fecha_gasto || '').slice(5, 7));
       return state.ticketMeses.includes(m);
     });
   } else {
-    // modo normal: solo el mes del período
     state.tickets = await api('GET', `/tickets?anio=${state.anio}&mes=${state.mes}`);
   }
 }
@@ -656,6 +662,7 @@ async function navigate(page) {
     tickets: 'Tickets de Viáticos',
     agentes: 'Gestión de Agentes',
     topes: 'Topes Mensuales',
+    periodos_pago: 'Períodos de Pago',
     actas: 'Libro de Actas',
     reportes: 'Reportes y Estadísticas',
     exportar: 'Exportar Reportes'
@@ -671,6 +678,7 @@ async function navigate(page) {
   else if (page === 'tickets') await renderTickets();
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
+  else if (page === 'periodos_pago') await renderPeriodosPago();
   else if (page === 'actas') await renderActas();
   else if (page === 'reportes') await renderReportes();
   else if (page === 'exportar') renderExportar();
@@ -734,7 +742,13 @@ async function renderDashboard() {
   const totalTransferir = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito + (a.total_pagado||0)), 0);
   const cantAgentes = state.resumen.filter(a => (a.total_aprobado + a.total_debito + (a.total_pagado||0)) > 0 || a.cant_pendientes > 0).length;
 
+  // Show active periodo in topbar
+  const periodoActivo = await api('GET', '/periodos_pago/activo').catch(() => null);
+  const ppLabel = periodoActivo
+    ? `<span style="font-size:12px;color:var(--gray500);padding:4px 8px;background:var(--ice);border-radius:6px">🗂️ Período activo: <strong>${String(periodoActivo.numero).padStart(3,'0')} - ${periodoActivo.nombre}</strong></span>`
+    : `<span style="font-size:12px;color:#dc2626;padding:4px 8px;background:#fef2f2;border-radius:6px">⚠️ Sin período abierto</span>`;
   document.getElementById('topbar-actions').innerHTML = `
+    ${ppLabel}
     <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
@@ -944,10 +958,16 @@ async function renderTickets() {
       </div>
     </div>
 
+    ${state.filtroPeriodoPago ? `
+    <div style="background:#ebf3fb;border:1px solid #2d6a9f;border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;color:#1a3a5c;font-weight:600">🗂️ Filtrando por período: <strong>${state.filtroPeriodoPagoNombre}</strong></span>
+      <button class="btn btn-ghost btn-sm" onclick="state.filtroPeriodoPago=null;state.filtroPeriodoPagoNombre=null;loadTickets().then(renderTickets)">✕ Quitar filtro</button>
+    </div>` : ''}
     <div style="font-size:12px;color:var(--gray500);padding:4px 2px">
       Mostrando: <strong>${
+        state.filtroPeriodoPago ? 'Período: ' + state.filtroPeriodoPagoNombre :
         state.ticketVista === 'todo' ? 'Todo el historial' :
-        state.ticketVista === 'anio' ? `Año ${state.anio}` :
+        state.ticketVista === 'anio' ? 'Año ' + state.anio :
         state.ticketMeses.length > 0 ? state.ticketMeses.map(m => MESES[m-1]).join(', ') + ' ' + state.anio :
         MESES[state.mes-1] + ' ' + state.anio
       }</strong> — ${filterTickets().length} ticket(s)
@@ -1011,7 +1031,7 @@ function renderTicketsTableHTML(tickets) {
   if (!tickets.length) return '<div class="empty-state"><div class="emoji">🔍</div><p>Sin tickets</p><small>Ajustar filtros o agregar nuevos tickets</small></div>';
   return `<table>
     <thead>
-      <tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Comprobante</th><th>Descripción</th><th>Valor</th><th>Aprobado</th><th>Estado</th><th></th></tr>
+      <tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Período</th><th>Comprobante</th><th>Descripción</th><th>Valor</th><th>Aprobado</th><th>Estado</th><th></th></tr>
     </thead>
     <tbody>
       ${tickets.map(t => `
@@ -1019,6 +1039,7 @@ function renderTicketsTableHTML(tickets) {
         <td class="td-name">${t.agente_nombre}</td>
         <td>${formatDate(t.fecha_gasto)}</td>
         <td><span class="badge" style="background:var(--ice2);color:var(--navy);font-size:11px">${t.categoria_nombre||'-'}</span></td>
+        <td style="font-size:11px;color:var(--gray500)">${t.periodo_pago_numero ? String(t.periodo_pago_numero).padStart(3,'0')+' - '+t.periodo_pago_nombre : '—'}</td>
         <td style="font-family:'DM Mono',monospace;font-size:12px">${t.comprobante||'-'}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.descripcion||'-'}</td>
         <td class="td-amount">${fmt(t.valor)}</td>
@@ -2286,6 +2307,178 @@ async function desmarcarPagado(ticketId) {
   toast('Pago desmarcado — ticket vuelve a Aprobado');
   await loadTickets();
   renderTickets();
+}
+
+// ══════════════════════════════════════════════════════════
+//  PERIODOS DE PAGO
+// ══════════════════════════════════════════════════════════
+
+async function renderPeriodosPago() {
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="openModalNuevoPeriodo()">+ Nuevo Período</button>`;
+
+  const periodos = await api('GET', '/periodos_pago');
+
+  document.getElementById('content').innerHTML = `
+    <div style="display:grid;gap:14px">
+      ${periodos.length === 0
+        ? `<div class="empty-state"><div class="emoji">🗂️</div><p>Sin períodos de pago</p><small>Creá el primer período con el botón + Nuevo Período</small></div>`
+        : periodos.map(pp => renderPeriodoCard(pp)).join('')
+      }
+    </div>`;
+}
+
+function renderPeriodoCard(pp) {
+  const cerrado = pp.estado === 'cerrado';
+  const totalAprobado = (pp.total_aprobado || 0);
+  const borderColor = cerrado ? '#6b7280' : '#2d6a9f';
+  const bgHeader = cerrado ? '#f3f4f6' : '#ebf3fb';
+  const fechaCierre = pp.cerrado_en ? pp.cerrado_en.slice(0,10).split('-').reverse().join('/') : null;
+
+  return `
+    <div style="border:1px solid ${borderColor};border-left:5px solid ${borderColor};border-radius:10px;background:white;overflow:hidden">
+      <div style="background:${bgHeader};padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:22px font-weight:800;color:var(--navy)">${String(pp.numero).padStart(3,'0')}</span>
+          <div>
+            <div style="font-weight:700;font-size:15px;color:var(--navy)">${pp.nombre}</div>
+            ${pp.descripcion ? `<div style="font-size:12px;color:var(--gray500)">${pp.descripcion}</div>` : ''}
+          </div>
+          <span style="padding:3px 12px;border-radius:20px;font-size:11.5px;font-weight:600;
+            background:${cerrado ? '#f3f4f6' : '#d4edda'};color:${cerrado ? '#6b7280' : '#155724'}">
+            ${cerrado ? '🔒 Cerrado' : '🟢 Abierto'}
+          </span>
+          ${fechaCierre ? `<span style="font-size:11px;color:var(--gray500)">Cerrado el ${fechaCierre} por ${pp.cerrado_por||'—'}</span>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="verTicketsPeriodo(${pp.id}, '${pp.nombre.replace(/'/g,"\'")}')">🧾 Ver tickets</button>
+          <button class="btn btn-ghost btn-sm" onclick="window.location.href='/api/periodos_pago/${pp.id}/exportar/excel'">📥 Excel</button>
+          ${!cerrado
+            ? `<button class="btn btn-ghost btn-sm" style="color:#166534" onclick="cerrarPeriodoPago(${pp.id}, '${pp.nombre.replace(/'/g,"\'")}')">🔒 Cerrar</button>`
+            : `<button class="btn btn-ghost btn-sm" style="color:#92400e" onclick="reabrirPeriodoPago(${pp.id})">🔓 Reabrir</button>`}
+          <button class="btn btn-ghost btn-sm" onclick="editarPeriodoPago(${pp.id}, '${pp.nombre.replace(/'/g,"\'")}', '${(pp.descripcion||'').replace(/'/g,"\'")}')">✏️</button>
+        </div>
+      </div>
+      <div style="padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px">
+        <div style="text-align:center;padding:10px;background:var(--ice);border-radius:8px">
+          <div style="font-size:11px;color:var(--gray500);text-transform:uppercase;margin-bottom:4px">Total tickets</div>
+          <div style="font-weight:700;font-size:18px;color:var(--navy)">${pp.total_tickets || 0}</div>
+        </div>
+        <div style="text-align:center;padding:10px;background:#fef9c3;border-radius:8px">
+          <div style="font-size:11px;color:#854d0e;text-transform:uppercase;margin-bottom:4px">⏳ Pendientes</div>
+          <div style="font-weight:700;font-size:18px;color:#854d0e">${pp.cant_pendientes || 0}</div>
+        </div>
+        <div style="text-align:center;padding:10px;background:#d4edda;border-radius:8px">
+          <div style="font-size:11px;color:#155724;text-transform:uppercase;margin-bottom:4px">✅ Aprobados</div>
+          <div style="font-weight:700;font-size:18px;color:#155724">${(pp.cant_aprobados||0)+(pp.cant_debito||0)}</div>
+        </div>
+        <div style="text-align:center;padding:10px;background:#e0f2fe;border-radius:8px">
+          <div style="font-size:11px;color:#0369a1;text-transform:uppercase;margin-bottom:4px">💸 Pagados</div>
+          <div style="font-weight:700;font-size:18px;color:#0369a1">${pp.cant_pagados || 0}</div>
+        </div>
+        <div style="text-align:center;padding:10px;background:#fef2f2;border-radius:8px">
+          <div style="font-size:11px;color:#991b1b;text-transform:uppercase;margin-bottom:4px">❌ Rechazados</div>
+          <div style="font-weight:700;font-size:18px;color:#991b1b">${pp.cant_rechazados || 0}</div>
+        </div>
+        <div style="text-align:center;padding:10px;background:#ede7f6;border-radius:8px">
+          <div style="font-size:11px;color:#4c1d95;text-transform:uppercase;margin-bottom:4px">Total aprobado</div>
+          <div style="font-weight:700;font-size:15px;color:#4c1d95">${fmt(pp.total_aprobado||0)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openModalNuevoPeriodo() {
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">🗂️ Nuevo Período de Pago</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:14px">
+      <div>
+        <label class="label">Nombre del período *</label>
+        <input type="text" class="input" id="pp-nombre" placeholder="Ej: Marzo 2026, Cuota 1, etc.">
+      </div>
+      <div>
+        <label class="label">Descripción (opcional)</label>
+        <input type="text" class="input" id="pp-desc" placeholder="Ej: Viáticos primer bimestre 2026">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="crearPeriodoPago()">✅ Crear período</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('pp-nombre')?.focus(), 100);
+}
+
+async function crearPeriodoPago() {
+  const nombre = document.getElementById('pp-nombre').value.trim();
+  const desc = document.getElementById('pp-desc').value.trim();
+  if (!nombre) return toast('Ingresá un nombre para el período', 'error');
+  const res = await api('POST', '/periodos_pago', { nombre, descripcion: desc || null });
+  toast(`Período ${String(res.numero).padStart(3,'0')} creado`, 'success');
+  closeModal();
+  renderPeriodosPago();
+}
+
+function editarPeriodoPago(id, nombre, desc) {
+  openModal(`
+    <div class="modal-header">
+      <span class="modal-title">✏️ Editar Período</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:14px">
+      <div>
+        <label class="label">Nombre *</label>
+        <input type="text" class="input" id="pp-edit-nombre" value="${nombre}">
+      </div>
+      <div>
+        <label class="label">Descripción</label>
+        <input type="text" class="input" id="pp-edit-desc" value="${desc}">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarEditPeriodo(${id})">💾 Guardar</button>
+    </div>
+  `);
+}
+
+async function guardarEditPeriodo(id) {
+  const nombre = document.getElementById('pp-edit-nombre').value.trim();
+  const desc = document.getElementById('pp-edit-desc').value.trim();
+  if (!nombre) return toast('El nombre es obligatorio', 'error');
+  await api('PUT', `/periodos_pago/${id}`, { nombre, descripcion: desc || null });
+  toast('Período actualizado', 'success');
+  closeModal();
+  renderPeriodosPago();
+}
+
+async function cerrarPeriodoPago(id, nombre) {
+  if (!confirm(`¿Cerrar el período "${nombre}"?\n\nUna vez cerrado, no se podrán modificar sus tickets.`)) return;
+  try {
+    await api('POST', `/periodos_pago/${id}/cerrar`);
+    toast('Período cerrado 🔒', 'success');
+    renderPeriodosPago();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function reabrirPeriodoPago(id) {
+  if (!confirm('¿Reabrir este período?')) return;
+  await api('POST', `/periodos_pago/${id}/reabrir`);
+  toast('Período reabierto', 'success');
+  renderPeriodosPago();
+}
+
+async function verTicketsPeriodo(id, nombre) {
+  // Navegar a tickets con filtro de período
+  state.filtroPeriodoPago = id;
+  state.filtroPeriodoPagoNombre = nombre;
+  state.ticketVista = 'mes'; // reset
+  await navigate('tickets');
 }
 
 // ══════════════════════════════════════════════════════════
