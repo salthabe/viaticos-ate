@@ -1699,7 +1699,7 @@ def crear_acta(data: ActaCreate):
         numero = _gen_numero_acta(conn)
         if USE_PG:
             new_id = _insert(conn,
-                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por)",
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                 (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
         else:
             new_id = _insert(conn,
@@ -1891,7 +1891,7 @@ def crear_acta(data: ActaCreate):
         numero = _gen_numero_acta(conn)
         if USE_PG:
             new_id = _insert(conn,
-                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por)",
+                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                 (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
         else:
             new_id = _insert(conn,
@@ -2062,17 +2062,18 @@ def get_periodo_activo():
 def crear_periodo_pago(data: PeriodoPagoCreate):
     with get_db() as conn:
         cur = conn.cursor()
-        # Generar número correlativo
         cur.execute("SELECT COALESCE(MAX(numero),0)+1 as n FROM periodos_pago")
         numero = _row(cur)["n"]
         if USE_PG:
-            new_id = _insert(conn,
-                "INSERT INTO periodos_pago (numero, nombre, descripcion, estado)",
+            cur.execute(
+                "INSERT INTO periodos_pago (numero,nombre,descripcion,estado) VALUES (%s,%s,%s,%s) RETURNING id",
                 (numero, data.nombre, data.descripcion, 'abierto'))
+            new_id = cur.fetchone()[0]
         else:
-            new_id = _insert(conn,
-                "INSERT INTO periodos_pago (numero, nombre, descripcion, estado) VALUES (?,?,?,?)",
+            cur.execute(
+                "INSERT INTO periodos_pago (numero,nombre,descripcion,estado) VALUES (?,?,?,?)",
                 (numero, data.nombre, data.descripcion, 'abierto'))
+            new_id = cur.lastrowid
     return {"id": new_id, "numero": numero, "mensaje": f"Período {numero:03d} creado"}
 
 @app.put("/api/periodos_pago/{pp_id}")
