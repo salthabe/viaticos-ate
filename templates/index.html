@@ -579,7 +579,8 @@ const state = {
   ticketVista: 'mes',  // 'mes' | 'anio' | 'todo'
   dashVista: 'mes',   // 'mes' | 'anio' | 'todo'
   filtroPeriodoPago: null,
-  filtroPeriodoPagoNombre: null
+  filtroPeriodoPagoNombre: null,
+  filtroPeriodoManual: false
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -910,12 +911,11 @@ async function renderTickets() {
   // Cargar períodos para el selector
   const periodos = await api('GET', '/periodos_pago').catch(() => []);
 
-  // Si no hay filtro seteado, usar el período activo por defecto
-  if (!state.filtroPeriodoPago) {
+  // Solo auto-seleccionar período activo si el usuario nunca eligió manualmente
+  if (!state.filtroPeriodoManual && !state.filtroPeriodoPago) {
     const activo = periodos.find(p => p.estado === 'abierto');
     if (activo) {
       state.filtroPeriodoPago = activo.id;
-      state.filtroPeriodoPagoNombre = String(activo.numero).padStart(3,'0') + ' - ' + activo.nombre;
     }
   }
 
@@ -1030,6 +1030,7 @@ async function limpiarMesesTicket() {
 
 async function cambiarPeriodoTickets(id) {
   state.filtroPeriodoPago = id ? parseInt(id) : null;
+  state.filtroPeriodoManual = true;  // usuario eligió explícitamente
   await loadTickets();
   renderTickets();
 }
