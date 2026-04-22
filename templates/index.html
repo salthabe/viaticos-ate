@@ -579,7 +579,8 @@ const state = {
   ticketVista: 'mes',  // 'mes' | 'anio' | 'todo'
   dashVista: 'mes',   // 'mes' | 'anio' | 'todo'
   filtroPeriodoPago: null,
-  filtroPeriodoPagoNombre: null
+  filtroPeriodoPagoNombre: null,
+  _periodoInicializado: false
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -616,6 +617,17 @@ async function loadResumen() {
 }
 
 async function loadTickets() {
+  // Si no hay filtro de período seteado, cargar el período activo por defecto
+  if (!state.filtroPeriodoPago && !state._periodoInicializado) {
+    state._periodoInicializado = true;
+    try {
+      const activo = await api('GET', '/periodos_pago/activo');
+      if (activo) {
+        state.filtroPeriodoPago = activo.id;
+        state.filtroPeriodoPagoNombre = String(activo.numero).padStart(3,'0') + ' - ' + activo.nombre;
+      }
+    } catch(e) {}
+  }
   if (state.filtroPeriodoPago) {
     state.tickets = await api('GET', `/tickets?periodo_pago_id=${state.filtroPeriodoPago}`);
     state.ticketMeses = [];
@@ -675,7 +687,7 @@ async function navigate(page) {
   await loadAll();
 
   if (page === 'dashboard') await renderDashboard();
-  else if (page === 'tickets') await renderTickets();
+  else if (page === 'tickets') { state._periodoInicializado = false; await renderTickets(); }
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
   else if (page === 'periodos_pago') await renderPeriodosPago();
@@ -961,7 +973,7 @@ async function renderTickets() {
     ${state.filtroPeriodoPago ? `
     <div style="background:#ebf3fb;border:1px solid #2d6a9f;border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:13px;color:#1a3a5c;font-weight:600">🗂️ Filtrando por período: <strong>${state.filtroPeriodoPagoNombre}</strong></span>
-      <button class="btn btn-ghost btn-sm" onclick="state.filtroPeriodoPago=null;state.filtroPeriodoPagoNombre=null;loadTickets().then(renderTickets)">✕ Quitar filtro</button>
+      <button class="btn btn-ghost btn-sm" onclick="state.filtroPeriodoPago=null;state.filtroPeriodoPagoNombre=null;state._periodoInicializado=true;loadTickets().then(renderTickets)">✕ Quitar filtro</button>
     </div>` : ''}
     <div style="font-size:12px;color:var(--gray500);padding:4px 2px">
       Mostrando: <strong>${
@@ -1161,6 +1173,7 @@ async function guardarTope(agenteId) {
 //  EXPORTAR
 // ══════════════════════════════════════════════════════════
 function renderExportar() {
+  setTimeout(cargarPeriodosExportar, 100);
   const agentesOpts = '<option value="">Todos los agentes</option>' +
     state.agentes.map(a => `<option value="${a.id}">${a.nombre}</option>`).join('');
 
@@ -1226,12 +1239,18 @@ function renderExportar() {
           </div>
           <div class="field">
             <label>Período</label>
-            <select class="select" id="cx-periodo" onchange="toggleFechasCustom(this.value)">
+<select class="select" id="cx-periodo" onchange="toggleFechasCustom(this.value)">
+              <option value="periodo_pago">🗂️ Período de Pago</option>
               <option value="mes">Mes seleccionado (${MESES[state.mes-1]} ${state.anio})</option>
               <option value="anio">Año completo (${state.anio})</option>
               <option value="rango">Rango de fechas</option>
               <option value="todo">Todo el historial</option>
             </select>
+            <div id="cx-pp-wrap" style="margin-top:8px">
+              <select class="select" id="cx-periodo-pago-id">
+                <option value="">Cargando períodos...</option>
+              </select>
+            </div>
           </div>
         </div>
         <div id="cx-fechas" style="display:none;display:none;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -1351,7 +1370,13 @@ function exportarCustom() {
   params.append('incluir_transferencias', transf);
   params.append('incluir_semanal', sem);
 
-  if (periodo === 'mes') {
+  if (periodo === 'periodo_pago') {
+    const ppId = document.getElementById('cx-periodo-pago-id').value;
+    if (!ppId) { toast('Seleccioná un período de pago', 'warning'); return; }
+    window.location.href = `/api/periodos_pago/${ppId}/exportar/excel`;
+    toast('Generando Excel del período...', 'success');
+    return;
+  } else if (periodo === 'mes') {
     params.append('anio', state.anio);
     params.append('mes', state.mes);
   } else if (periodo === 'anio') {
@@ -2397,7 +2422,7 @@ function openModalNuevoPeriodo() {
     <div class="modal-body" style="display:grid;gap:14px">
       <div>
         <label class="label">Nombre del período *</label>
-        <input type="text" class="input" id="pp-nombre" placeholder="Ej: Marzo 2026, Cuota 1, etc.">
+        <input type="text" class="input" id="pp-nombre" placeholder="Ej: Marzo 2026, Cuota 1, etc." onkeydown="if(event.key==='Enter') crearPeriodoPago()">
       </div>
       <div>
         <label class="label">Descripción (opcional)</label>
@@ -2416,10 +2441,14 @@ async function crearPeriodoPago() {
   const nombre = document.getElementById('pp-nombre').value.trim();
   const desc = document.getElementById('pp-desc').value.trim();
   if (!nombre) return toast('Ingresá un nombre para el período', 'error');
-  const res = await api('POST', '/periodos_pago', { nombre, descripcion: desc || null });
-  toast(`Período ${String(res.numero).padStart(3,'0')} creado`, 'success');
-  closeModal();
-  renderPeriodosPago();
+  try {
+    const res = await api('POST', '/periodos_pago', { nombre, descripcion: desc || null });
+    toast(`Período ${String(res.numero).padStart(3,'0')} creado`, 'success');
+    closeModal();
+    await renderPeriodosPago();
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+  }
 }
 
 function editarPeriodoPago(id, nombre, desc) {
