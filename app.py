@@ -639,6 +639,10 @@ async def importar_tickets(request: dict):
     with get_db() as conn:
         cur = conn.cursor()
 
+        # Obtener período activo
+        pp = _get_periodo_abierto(conn)
+        pp_id = pp["id"] if pp else None
+
         # Cargar mapa agente_nombre -> id
         cur.execute("SELECT id, nombre FROM agentes WHERE activo=1")
         agentes_map = {r["nombre"].strip().lower(): r["id"] for r in _rows(cur)}
@@ -705,8 +709,8 @@ async def importar_tickets(request: dict):
 
             # Insertar
             new_id = _insert(conn,
-                f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor) VALUES ({PH},{PH},{PH},{PH},{PH},{PH})",
-                (agente_id, fecha_gasto, categoria_id, comprobante, descripcion, valor))
+                f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor,periodo_pago_id) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH})",
+                (agente_id, fecha_gasto, categoria_id, comprobante, descripcion, valor, pp_id))
             insertados += 1
             detalle.append({"fila": fila_num, "estado": "insertado", "id": new_id,
                             "agente": agente_nombre, "fecha": fecha_gasto, "valor": valor})
