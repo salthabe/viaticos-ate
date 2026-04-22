@@ -579,8 +579,7 @@ const state = {
   ticketVista: 'mes',  // 'mes' | 'anio' | 'todo'
   dashVista: 'mes',   // 'mes' | 'anio' | 'todo'
   filtroPeriodoPago: null,
-  filtroPeriodoPagoNombre: null,
-  _periodoInicializado: false
+  filtroPeriodoPagoNombre: null
 };
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -617,17 +616,6 @@ async function loadResumen() {
 }
 
 async function loadTickets() {
-  // Si no hay filtro de período seteado, cargar el período activo por defecto
-  if (!state.filtroPeriodoPago && !state._periodoInicializado) {
-    state._periodoInicializado = true;
-    try {
-      const activo = await api('GET', '/periodos_pago/activo');
-      if (activo) {
-        state.filtroPeriodoPago = activo.id;
-        state.filtroPeriodoPagoNombre = String(activo.numero).padStart(3,'0') + ' - ' + activo.nombre;
-      }
-    } catch(e) {}
-  }
   if (state.filtroPeriodoPago) {
     state.tickets = await api('GET', `/tickets?periodo_pago_id=${state.filtroPeriodoPago}`);
     state.ticketMeses = [];
@@ -687,7 +675,7 @@ async function navigate(page) {
   await loadAll();
 
   if (page === 'dashboard') await renderDashboard();
-  else if (page === 'tickets') { state._periodoInicializado = false; await renderTickets(); }
+  else if (page === 'tickets') await renderTickets();
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
   else if (page === 'periodos_pago') await renderPeriodosPago();
@@ -919,9 +907,31 @@ async function renderDashboard() {
 //  TICKETS
 // ══════════════════════════════════════════════════════════
 async function renderTickets() {
+  // Cargar períodos para el selector
+  const periodos = await api('GET', '/periodos_pago').catch(() => []);
+
+  // Si no hay filtro seteado, usar el período activo por defecto
+  if (!state.filtroPeriodoPago) {
+    const activo = periodos.find(p => p.estado === 'abierto');
+    if (activo) {
+      state.filtroPeriodoPago = activo.id;
+      state.filtroPeriodoPagoNombre = String(activo.numero).padStart(3,'0') + ' - ' + activo.nombre;
+    }
+  }
+
   await loadTickets();
 
+  const ppOpts = `
+    <option value="">📚 Todo el historial</option>
+    ${periodos.map(pp => `<option value="${pp.id}" ${state.filtroPeriodoPago==pp.id?'selected':''}>
+      ${pp.estado==='abierto'?'🟢':'🔒'} ${String(pp.numero).padStart(3,'0')} - ${pp.nombre}
+    </option>`).join('')}`;
+
   document.getElementById('topbar-actions').innerHTML = `
+    <select class="select" style="font-size:12.5px;padding:5px 10px;min-width:200px"
+      onchange="cambiarPeriodoTickets(this.value)">
+      ${ppOpts}
+    </select>
     <button class="btn btn-ghost btn-sm" onclick="openModalImportar()">📥 Importar Excel</button>
     <button class="btn btn-primary btn-sm" onclick="openModalTicket()">+ Nuevo Ticket</button>`;
 
@@ -970,11 +980,7 @@ async function renderTickets() {
       </div>
     </div>
 
-    ${state.filtroPeriodoPago ? `
-    <div style="background:#ebf3fb;border:1px solid #2d6a9f;border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:13px;color:#1a3a5c;font-weight:600">🗂️ Filtrando por período: <strong>${state.filtroPeriodoPagoNombre}</strong></span>
-      <button class="btn btn-ghost btn-sm" onclick="state.filtroPeriodoPago=null;state.filtroPeriodoPagoNombre=null;state._periodoInicializado=true;loadTickets().then(renderTickets)">✕ Quitar filtro</button>
-    </div>` : ''}
+
     <div style="font-size:12px;color:var(--gray500);padding:4px 2px">
       Mostrando: <strong>${
         state.filtroPeriodoPago ? 'Período: ' + state.filtroPeriodoPagoNombre :
@@ -1018,6 +1024,12 @@ async function toggleMesTicket(mes) {
 async function limpiarMesesTicket() {
   state.ticketMeses = [];
   state.ticketVista = 'mes';
+  await loadTickets();
+  renderTickets();
+}
+
+async function cambiarPeriodoTickets(id) {
+  state.filtroPeriodoPago = id ? parseInt(id) : null;
   await loadTickets();
   renderTickets();
 }
@@ -1172,6 +1184,18 @@ async function guardarTope(agenteId) {
 // ══════════════════════════════════════════════════════════
 //  EXPORTAR
 // ══════════════════════════════════════════════════════════
+async function cargarPeriodosExportar() {
+  try {
+    const periodos = await api('GET', '/periodos_pago');
+    const sel = document.getElementById('cx-periodo-pago-id');
+    if (sel) {
+      sel.innerHTML = periodos.map(pp =>
+        `<option value="${pp.id}">${String(pp.numero).padStart(3,'0')} - ${pp.nombre} ${pp.estado==='abierto'?'🟢':''}</option>`
+      ).join('');
+    }
+  } catch(e) {}
+}
+
 function renderExportar() {
   setTimeout(cargarPeriodosExportar, 100);
   const agentesOpts = '<option value="">Todos los agentes</option>' +
