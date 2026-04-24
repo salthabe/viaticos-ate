@@ -1265,13 +1265,13 @@ function renderExportar() {
           <div class="field">
             <label>Período</label>
 <select class="select" id="cx-periodo" onchange="toggleFechasCustom(this.value)">
-              <option value="periodo_pago">🗂️ Período de Pago</option>
               <option value="mes">Mes seleccionado (${MESES[state.mes-1]} ${state.anio})</option>
               <option value="anio">Año completo (${state.anio})</option>
+              <option value="periodo_pago">🗂️ Período de Pago</option>
               <option value="rango">Rango de fechas</option>
               <option value="todo">Todo el historial</option>
             </select>
-            <div id="cx-pp-wrap" style="margin-top:8px">
+            <div id="cx-pp-wrap" style="margin-top:8px;display:none">
               <select class="select" id="cx-periodo-pago-id">
                 <option value="">Cargando períodos...</option>
               </select>
