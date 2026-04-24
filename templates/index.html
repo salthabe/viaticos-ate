@@ -1403,7 +1403,13 @@ function exportarCustom() {
   if (periodo === 'periodo_pago') {
     const ppId = document.getElementById('cx-periodo-pago-id').value;
     if (!ppId) { toast('Seleccioná un período de pago', 'warning'); return; }
-    window.location.href = `/api/periodos_pago/${ppId}/exportar/excel`;
+    // Si hay filtros de agente o estado, usar el endpoint custom con periodo_pago_id
+    if (agente || estadosSeleccionados.length > 0) {
+      params.append('periodo_pago_id', ppId);
+      window.location.href = '/api/exportar/excel/custom?' + params.toString();
+    } else {
+      window.location.href = `/api/periodos_pago/${ppId}/exportar/excel`;
+    }
     toast('Generando Excel del período...', 'success');
     return;
   } else if (periodo === 'mes') {
