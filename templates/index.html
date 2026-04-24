@@ -1360,7 +1360,12 @@ function renderExportar() {
 
 function toggleFechasCustom(val) {
   const el = document.getElementById('cx-fechas');
-  el.style.display = val === 'rango' ? 'grid' : 'none';
+  if (el) el.style.display = val === 'rango' ? 'grid' : 'none';
+  const ppWrap = document.getElementById('cx-pp-wrap');
+  if (ppWrap) {
+    ppWrap.style.display = val === 'periodo_pago' ? 'block' : 'none';
+    if (val === 'periodo_pago') cargarPeriodosExportar();
+  }
 }
 
 function toggleEstadoTodos(cb) {
