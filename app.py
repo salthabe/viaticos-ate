@@ -729,6 +729,7 @@ def exportar_excel_custom(
     estado: Optional[List[str]] = Query(default=None),
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
+    periodo_pago_id: Optional[int] = None,
     incluir_transferencias: bool = True,
     incluir_tickets: bool = True,
     incluir_semanal: bool = False,
@@ -755,6 +756,8 @@ def exportar_excel_custom(
                 estado = [estado]
             placeholders = ",".join([PH] * len(estado))
             q += f" AND t.estado IN ({placeholders})"; params.extend(estado)
+        if periodo_pago_id:
+            q += f" AND t.periodo_pago_id={PH}"; params.append(periodo_pago_id)
         if anio:
             q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
         if mes:
