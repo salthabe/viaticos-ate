@@ -974,7 +974,7 @@ async function renderTickets() {
               onclick="toggleMesTicket(${num})">${m.slice(0,3)}</button>`;
           }).join('')}
         </div>
-        <input class="search-input" placeholder="🔍 Buscar agente..." value="${state.ticketSearch}"
+        <input class="search-input" placeholder="🔍 Buscar agente o descripción..." value="${state.ticketSearch}"
           style="margin:0;width:180px"
           oninput="state.ticketSearch=this.value;renderTicketsTable()">
       </div>
@@ -1001,7 +1001,9 @@ async function renderTickets() {
 function filterTickets() {
   return state.tickets.filter(t => {
     const matchFilter = state.ticketFilter === 'todos' || t.estado === state.ticketFilter;
-    const matchSearch = !state.ticketSearch || t.agente_nombre.toLowerCase().includes(state.ticketSearch.toLowerCase());
+    const matchSearch = !state.ticketSearch || 
+      t.agente_nombre.toLowerCase().includes(state.ticketSearch.toLowerCase()) ||
+      (t.descripcion || '').toLowerCase().includes(state.ticketSearch.toLowerCase());
     return matchFilter && matchSearch;
   });
 }
