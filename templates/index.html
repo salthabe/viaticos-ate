@@ -1075,6 +1075,7 @@ function renderTicketsTableHTML(tickets) {
             ${t.estado === 'pendiente' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revisarTicket(${t.id},'modal')" title="Revisar">⋯</button>` : ''}
             ${(t.estado === 'aprobado' || t.estado === 'debito_parcial') ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="marcarPagado(${t.id})" title="Marcar como pagado" style="color:#0369a1">💸</button>` : ''}
             ${t.estado === 'pagado' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="desmarcarPagado(${t.id})" title="Desmarcar pago" style="color:#64748b;font-size:11px">↩</button>` : ''}
+            ${(t.estado === 'aprobado' || t.estado === 'debito_parcial' || t.estado === 'rechazado') ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revertirPendiente(${t.id})" title="Volver a Pendiente" style="color:#d97706">↺</button>` : ''}
             <button class="btn btn-ghost btn-sm btn-icon" onclick="verAdjuntosTicket(${t.id})" title="Adjuntos">📎</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="verHistorialTicket(${t.id})" title="Historial">🕐</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarTicket(${t.id})" title="Eliminar">🗑</button>
@@ -2366,6 +2367,19 @@ async function desmarcarPagado(ticketId) {
     revisado_por: 'Sistema'
   });
   toast('Pago desmarcado — ticket vuelve a Aprobado');
+  await loadTickets();
+  renderTickets();
+}
+
+async function revertirPendiente(ticketId) {
+  if (!confirm('¿Volver este ticket a estado PENDIENTE?\n\nSe borrará la revisión anterior y quedará disponible para revisar de nuevo.')) return;
+  await api('PUT', `/tickets/${ticketId}/revision`, {
+    estado: 'pendiente',
+    motivo_rechazo: null,
+    valor_aprobado: null,
+    revisado_por: null
+  });
+  toast('Ticket vuelto a Pendiente ↺', 'success');
   await loadTickets();
   renderTickets();
 }
