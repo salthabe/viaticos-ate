@@ -393,7 +393,7 @@ def crear_ticket(data: TicketCreate):
 
 @app.put("/api/tickets/{ticket_id}/revision")
 def revisar_ticket(ticket_id: int, data: TicketRevision):
-    if data.estado not in ("aprobado", "rechazado", "debito_parcial", "pagado"):
+    if data.estado not in ("aprobado", "rechazado", "debito_parcial", "pagado", "pendiente"):
         raise HTTPException(400, "Estado inválido")
     with get_db() as conn:
         cur = conn.cursor()
@@ -404,7 +404,7 @@ def revisar_ticket(ticket_id: int, data: TicketRevision):
         valor_aprobado = (data.valor_aprobado if data.estado == "debito_parcial"
                           else ticket["valor"] if data.estado == "aprobado"
                           else ticket.get("valor_aprobado") if data.estado == "pagado"
-                          else 0)
+                          else None)
         cur.execute(f"""UPDATE tickets SET estado={PH}, motivo_rechazo={PH}, valor_aprobado={PH},
                     revisado_en=CURRENT_TIMESTAMP, revisado_por={PH} WHERE id={PH}""",
                     (data.estado, data.motivo_rechazo, valor_aprobado, data.revisado_por, ticket_id))
