@@ -845,7 +845,8 @@ def exportar_excel_custom(
         ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws2.row_dimensions[1].height = 26
 
-        hdrs2 = ["Agente","CUIT","CBU","Banco/Alias","Total Presentado","Aprobado","Tope","A TRANSFERIR"]
+        # CAMBIO: "Tope" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
+        hdrs2 = ["Agente","CUIT","CBU","Banco/Alias","Total Presentado","Aprobado","Pagado","TOTAL"]
         for c, h in enumerate(hdrs2, 1):
             cell = ws2.cell(row=2, column=c, value=h)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -854,14 +855,17 @@ def exportar_excel_custom(
         total_t = 0
         for ri, ag in enumerate(res, 3):
             tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
+            aprobado = ag["total_aprobado"] + ag["total_debito"]
+            pagado = ag["total_pagado"]
+            total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
             vals = [ag["nombre"], ag.get("cuit",""), ag.get("cbu",""),
                     ag.get("banco","") or ag.get("alias",""),
-                    tp, ag["total_aprobado"]+ag["total_debito"], ag["tope_efectivo"], ag["a_transferir"]]
+                    tp, aprobado, pagado, total_row]
             for c, v in enumerate(vals, 1):
                 cell = ws2.cell(row=ri, column=c, value=v)
                 if c in (5,6,7,8): cell.number_format = '"$"#,##0.00'
                 if ri % 2 == 0: cell.fill = PatternFill("solid", fgColor="EBF3FB")
-            total_t += ag["a_transferir"]
+            total_t += total_row
         tr2 = len(res) + 3
         ws2.cell(row=tr2, column=1, value="TOTAL").font = Font(bold=True)
         ct = ws2.cell(row=tr2, column=8, value=total_t)
@@ -930,7 +934,8 @@ def exportar_excel(anio: int, mes: int):
     ws1["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 30
 
-    hdrs = ["Agente","CUIT","CBU","Banco / Alias","Total Presentado","Total Aprobado","Tope Mensual","A TRANSFERIR"]
+    # CAMBIO: "Tope Mensual" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
+    hdrs = ["Agente","CUIT","CBU","Banco / Alias","Total Presentado","Total Aprobado","Pagado","TOTAL"]
     for c, h in enumerate(hdrs, 1):
         cell = ws1.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -940,14 +945,17 @@ def exportar_excel(anio: int, mes: int):
     total_transf = 0
     for ri, ag in enumerate(resumen_data, 3):
         tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
+        aprobado = ag["total_aprobado"] + ag["total_debito"]
+        pagado = ag["total_pagado"]
+        total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
         vals = [ag["nombre"], ag.get("cuit",""), ag.get("cbu",""),
                 ag.get("banco","") or ag.get("alias",""),
-                tp, ag["total_aprobado"]+ag["total_debito"], ag["tope_efectivo"], ag["a_transferir"]]
+                tp, aprobado, pagado, total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
             if c in (5,6,7,8): cell.number_format = '"$"#,##0.00'
             if ri % 2 == 0:    cell.fill = PatternFill("solid", fgColor="EBF3FB")
-        total_transf += ag["a_transferir"]
+        total_transf += total_row
 
     tr = len(resumen_data) + 3
     ws1.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True)
@@ -2181,6 +2189,7 @@ def exportar_excel_periodo_pago(pp_id: int):
     wb = openpyxl.Workbook()
 
     # Hoja 1: Resumen por agente
+    # CAMBIO: "A Transferir" -> "TOTAL" (Aprobado + Pagado, sin tope)
     ws1 = wb.active
     ws1.title = "Resumen"
     ws1.merge_cells("A1:H1")
@@ -2189,7 +2198,7 @@ def exportar_excel_periodo_pago(pp_id: int):
     ws1["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
     ws1["A1"].alignment = XAlign(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 28
-    hdrs1 = ["Agente", "CUIT", "CBU", "Banco/Alias", "Aprobado", "Pagado", "Rechazado", "A Transferir"]
+    hdrs1 = ["Agente", "CUIT", "CBU", "Banco/Alias", "Aprobado", "Pagado", "Rechazado", "TOTAL"]
     for c, h in enumerate(hdrs1, 1):
         cell = ws1.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -2198,14 +2207,16 @@ def exportar_excel_periodo_pago(pp_id: int):
     total_transf = 0
     for ri, a in enumerate(resumen_data, 3):
         aprobado = a["total_aprobado"] + a["total_debito"]
+        pagado = a["total_pagado"]
+        total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
         vals = [a["nombre"], a.get("cuit") or "-", a.get("cbu") or "-",
                 a.get("banco") or a.get("alias") or "-",
-                aprobado, a["total_pagado"], a["total_rechazado"], a["a_transferir"]]
+                aprobado, pagado, a["total_rechazado"], total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
             if c in (5, 6, 7, 8):
                 cell.number_format = '"$"#,##0.00'
-        total_transf += a["a_transferir"]
+        total_transf += total_row
     tr = len(resumen_data) + 3
     ws1.cell(row=tr, column=7, value="TOTAL").font = Font(bold=True)
     ws1.cell(row=tr, column=8, value=total_transf).number_format = '"$"#,##0.00'
