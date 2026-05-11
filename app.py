@@ -838,15 +838,15 @@ def exportar_excel_custom(
         if agente_id:
             res = [r for r in res if r["id"] == agente_id]
 
-        ws2.merge_cells("A1:H1")
+        ws2.merge_cells("A1:E1")
         ws2["A1"] = f"SINDICATO ATE — TRANSFERENCIAS — {titulo_filtro}"
         ws2["A1"].font = Font(bold=True, size=13, color="FFFFFF")
         ws2["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
         ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws2.row_dimensions[1].height = 26
 
-        # CAMBIO: "Tope" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
-        hdrs2 = ["Agente","CUIT","CBU","Banco/Alias","Total Presentado","Aprobado","Pagado","TOTAL"]
+        # CAMBIO: sin CUIT/CBU/Banco. "Tope" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
+        hdrs2 = ["Agente","Total Presentado","Aprobado","Pagado","TOTAL"]
         for c, h in enumerate(hdrs2, 1):
             cell = ws2.cell(row=2, column=c, value=h)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -858,20 +858,18 @@ def exportar_excel_custom(
             aprobado = ag["total_aprobado"] + ag["total_debito"]
             pagado = ag["total_pagado"]
             total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
-            vals = [ag["nombre"], ag.get("cuit",""), ag.get("cbu",""),
-                    ag.get("banco","") or ag.get("alias",""),
-                    tp, aprobado, pagado, total_row]
+            vals = [ag["nombre"], tp, aprobado, pagado, total_row]
             for c, v in enumerate(vals, 1):
                 cell = ws2.cell(row=ri, column=c, value=v)
-                if c in (5,6,7,8): cell.number_format = '"$"#,##0.00'
+                if c in (2,3,4,5): cell.number_format = '"$"#,##0.00'
                 if ri % 2 == 0: cell.fill = PatternFill("solid", fgColor="EBF3FB")
             total_t += total_row
         tr2 = len(res) + 3
         ws2.cell(row=tr2, column=1, value="TOTAL").font = Font(bold=True)
-        ct = ws2.cell(row=tr2, column=8, value=total_t)
+        ct = ws2.cell(row=tr2, column=5, value=total_t)
         ct.font = Font(bold=True, color="FFFFFF"); ct.fill = PatternFill("solid", fgColor="1a3a5c")
         ct.number_format = '"$"#,##0.00'
-        for i, w in enumerate([30,16,26,20,16,16,14,16], 1):
+        for i, w in enumerate([30,18,18,18,18], 1):
             ws2.column_dimensions[get_column_letter(i)].width = w
 
     if incluir_semanal and anio and mes:
@@ -927,15 +925,15 @@ def exportar_excel(anio: int, mes: int):
 
     # Hoja 1: Transferencias
     ws1 = wb.active; ws1.title = "Transferencias"
-    ws1.merge_cells("A1:H1")
+    ws1.merge_cells("A1:E1")
     ws1["A1"] = f"SINDICATO ATE — REINTEGRO DE VIÁTICOS {nombre_mes.upper()} {anio}"
     ws1["A1"].font = Font(bold=True, size=14, color="FFFFFF")
     ws1["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
     ws1["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 30
 
-    # CAMBIO: "Tope Mensual" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
-    hdrs = ["Agente","CUIT","CBU","Banco / Alias","Total Presentado","Total Aprobado","Pagado","TOTAL"]
+    # CAMBIO: sin CUIT/CBU/Banco. "Tope Mensual" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
+    hdrs = ["Agente","Total Presentado","Total Aprobado","Pagado","TOTAL"]
     for c, h in enumerate(hdrs, 1):
         cell = ws1.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -948,21 +946,19 @@ def exportar_excel(anio: int, mes: int):
         aprobado = ag["total_aprobado"] + ag["total_debito"]
         pagado = ag["total_pagado"]
         total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
-        vals = [ag["nombre"], ag.get("cuit",""), ag.get("cbu",""),
-                ag.get("banco","") or ag.get("alias",""),
-                tp, aprobado, pagado, total_row]
+        vals = [ag["nombre"], tp, aprobado, pagado, total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
-            if c in (5,6,7,8): cell.number_format = '"$"#,##0.00'
+            if c in (2,3,4,5): cell.number_format = '"$"#,##0.00'
             if ri % 2 == 0:    cell.fill = PatternFill("solid", fgColor="EBF3FB")
         total_transf += total_row
 
     tr = len(resumen_data) + 3
     ws1.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True)
-    ct = ws1.cell(row=tr, column=8, value=total_transf)
+    ct = ws1.cell(row=tr, column=5, value=total_transf)
     ct.font = Font(bold=True, color="FFFFFF"); ct.fill = PatternFill("solid", fgColor="1a3a5c")
     ct.number_format = '"$"#,##0.00'
-    for i, w in enumerate([30,16,26,20,16,16,14,16], 1):
+    for i, w in enumerate([30,18,18,18,18], 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
 
     # Hoja 2: Detalle de Tickets
@@ -2189,16 +2185,16 @@ def exportar_excel_periodo_pago(pp_id: int):
     wb = openpyxl.Workbook()
 
     # Hoja 1: Resumen por agente
-    # CAMBIO: "A Transferir" -> "TOTAL" (Aprobado + Pagado, sin tope)
+    # CAMBIO: sin CUIT/CBU/Banco. "A Transferir" -> "TOTAL" (Aprobado + Pagado, sin tope)
     ws1 = wb.active
     ws1.title = "Resumen"
-    ws1.merge_cells("A1:H1")
+    ws1.merge_cells("A1:E1")
     ws1["A1"] = f"SINDICATO ATE — PERÍODO {nombre_pp}"
     ws1["A1"].font = Font(bold=True, size=13, color="FFFFFF")
     ws1["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
     ws1["A1"].alignment = XAlign(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 28
-    hdrs1 = ["Agente", "CUIT", "CBU", "Banco/Alias", "Aprobado", "Pagado", "Rechazado", "TOTAL"]
+    hdrs1 = ["Agente", "Aprobado", "Pagado", "Rechazado", "TOTAL"]
     for c, h in enumerate(hdrs1, 1):
         cell = ws1.cell(row=2, column=c, value=h)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -2209,19 +2205,17 @@ def exportar_excel_periodo_pago(pp_id: int):
         aprobado = a["total_aprobado"] + a["total_debito"]
         pagado = a["total_pagado"]
         total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
-        vals = [a["nombre"], a.get("cuit") or "-", a.get("cbu") or "-",
-                a.get("banco") or a.get("alias") or "-",
-                aprobado, pagado, a["total_rechazado"], total_row]
+        vals = [a["nombre"], aprobado, pagado, a["total_rechazado"], total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
-            if c in (5, 6, 7, 8):
+            if c in (2, 3, 4, 5):
                 cell.number_format = '"$"#,##0.00'
         total_transf += total_row
     tr = len(resumen_data) + 3
-    ws1.cell(row=tr, column=7, value="TOTAL").font = Font(bold=True)
-    ws1.cell(row=tr, column=8, value=total_transf).number_format = '"$"#,##0.00'
-    ws1.cell(row=tr, column=8).font = Font(bold=True)
-    for col, w in zip("ABCDEFGH", [28, 16, 22, 18, 14, 14, 14, 14]):
+    ws1.cell(row=tr, column=4, value="TOTAL").font = Font(bold=True)
+    ws1.cell(row=tr, column=5, value=total_transf).number_format = '"$"#,##0.00'
+    ws1.cell(row=tr, column=5).font = Font(bold=True)
+    for col, w in zip("ABCDE", [30, 16, 16, 16, 18]):
         ws1.column_dimensions[col].width = w
 
     # Hoja 2: Detalle de tickets
