@@ -19,7 +19,7 @@ static_dir = os.path.join(BASE_DIR, "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# ── DATABASE: PostgreSQL en Railway, SQLite en local ─────────────────────────
+# ── DATABASE: PostgreSQL en Render, SQLite en local ──────────────────────────
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -62,7 +62,7 @@ if USE_PG:
 
     def _year_filter(col):  return f"EXTRACT(YEAR  FROM {col}) = {PH}"
     def _month_filter(col): return f"EXTRACT(MONTH FROM {col}) = {PH}"
-    def _yp(v): return v          # año/mes como int
+    def _yp(v): return v
     def _mp(v): return v
 
     def init_db():
@@ -77,6 +77,16 @@ if USE_PG:
                 );
                 CREATE TABLE IF NOT EXISTS categorias (
                     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL UNIQUE, activa INTEGER DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS periodos_pago (
+                    id SERIAL PRIMARY KEY,
+                    numero INTEGER NOT NULL,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT,
+                    estado TEXT DEFAULT 'abierto',
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    cerrado_en TIMESTAMP,
+                    cerrado_por TEXT
                 );
                 CREATE TABLE IF NOT EXISTS tickets (
                     id SERIAL PRIMARY KEY,
@@ -121,16 +131,6 @@ if USE_PG:
                     cerrado_en TIMESTAMP,
                     UNIQUE(anio, mes)
                 );
-                CREATE TABLE IF NOT EXISTS periodos_pago (
-                    id SERIAL PRIMARY KEY,
-                    numero INTEGER NOT NULL,
-                    nombre TEXT NOT NULL,
-                    descripcion TEXT,
-                    estado TEXT DEFAULT 'abierto',
-                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    cerrado_en TIMESTAMP,
-                    cerrado_por TEXT
-                );
                 CREATE TABLE IF NOT EXISTS actas (
                     id SERIAL PRIMARY KEY,
                     numero_acta TEXT NOT NULL,
@@ -142,6 +142,14 @@ if USE_PG:
                     redactado_por TEXT,
                     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     modificado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS presupuestos_pago (
+                    id SERIAL PRIMARY KEY,
+                    periodo_pago_id INTEGER NOT NULL UNIQUE REFERENCES periodos_pago(id) ON DELETE CASCADE,
+                    monto REAL NOT NULL DEFAULT 0,
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_por TEXT
                 );
             """)
             cur.execute("""
@@ -197,6 +205,16 @@ else:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nombre TEXT NOT NULL UNIQUE, activa INTEGER DEFAULT 1
                 );
+                CREATE TABLE IF NOT EXISTS periodos_pago (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    numero INTEGER NOT NULL,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT,
+                    estado TEXT DEFAULT 'abierto',
+                    creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+                    cerrado_en TEXT,
+                    cerrado_por TEXT
+                );
                 CREATE TABLE IF NOT EXISTS tickets (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     agente_id INTEGER NOT NULL REFERENCES agentes(id),
@@ -239,16 +257,6 @@ else:
                     cerrado_en TEXT,
                     UNIQUE(anio, mes)
                 );
-                CREATE TABLE IF NOT EXISTS periodos_pago (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    numero INTEGER NOT NULL,
-                    nombre TEXT NOT NULL,
-                    descripcion TEXT,
-                    estado TEXT DEFAULT 'abierto',
-                    creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
-                    cerrado_en TEXT,
-                    cerrado_por TEXT
-                );
                 CREATE TABLE IF NOT EXISTS actas (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     numero_acta TEXT NOT NULL,
@@ -260,6 +268,14 @@ else:
                     redactado_por TEXT,
                     creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
                     modificado_en TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS presupuestos_pago (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    periodo_pago_id INTEGER NOT NULL UNIQUE REFERENCES periodos_pago(id) ON DELETE CASCADE,
+                    monto REAL NOT NULL DEFAULT 0,
+                    creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_por TEXT
                 );
                 INSERT OR IGNORE INTO categorias (nombre) VALUES
                     ('Transporte'),('Alojamiento'),('Alimentación'),
@@ -307,6 +323,11 @@ class PeriodoTope(BaseModel):
     mes: int
     tope_override: Optional[float] = None
 
+class PresupuestoSet(BaseModel):
+    periodo_pago_id: int
+    monto: float
+    actualizado_por: Optional[str] = None
+
 # ── AGENTES ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/agentes")
@@ -346,6 +367,21 @@ def obtener_agente(agente_id: int):
             raise HTTPException(404, "Agente no encontrado")
         return row
 
+@app.delete("/api/agentes/{agente_id}")
+def eliminar_agente(agente_id: int, forzar: bool = False):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) as n FROM tickets WHERE agente_id={PH}", (agente_id,))
+        row = _row(cur)
+        cant = row["n"] if row else 0
+        if cant > 0 and not forzar:
+            raise HTTPException(409, f"El agente tiene {cant} ticket(s). Usar forzar=true para eliminar junto con sus tickets.")
+        if forzar:
+            cur.execute(f"DELETE FROM periodos WHERE agente_id={PH}", (agente_id,))
+            cur.execute(f"DELETE FROM tickets WHERE agente_id={PH}", (agente_id,))
+        cur.execute(f"DELETE FROM agentes WHERE id={PH}", (agente_id,))
+    return {"mensaje": "Agente eliminado"}
+
 # ── TICKETS ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/tickets")
@@ -383,7 +419,6 @@ def listar_tickets(agente_id: Optional[int] = None, estado: Optional[str] = None
 @app.post("/api/tickets")
 def crear_ticket(data: TicketCreate):
     with get_db() as conn:
-        # Auto-asignar al período de pago abierto
         pp = _get_periodo_abierto(conn)
         pp_id = pp["id"] if pp else None
         new_id = _insert(conn,
@@ -408,7 +443,6 @@ def revisar_ticket(ticket_id: int, data: TicketRevision):
         cur.execute(f"""UPDATE tickets SET estado={PH}, motivo_rechazo={PH}, valor_aprobado={PH},
                     revisado_en=CURRENT_TIMESTAMP, revisado_por={PH} WHERE id={PH}""",
                     (data.estado, data.motivo_rechazo, valor_aprobado, data.revisado_por, ticket_id))
-        # Log history
         if ticket["estado"] != data.estado:
             _registrar_historial(conn, ticket_id, "estado", ticket["estado"], data.estado, data.revisado_por)
         if data.estado == "debito_parcial" and data.valor_aprobado is not None:
@@ -502,6 +536,40 @@ def resumen_semanal(anio: int, mes: int):
     return [{"semana": s, "tickets": items, "total": sum(i.get("valor_aprobado") or 0 for i in items)}
             for s, items in semanas.items() if items]
 
+@app.get("/api/resumen/agrupado")
+def resumen_agrupado(anio: Optional[int] = None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = f"""
+            SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
+                COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END), 0) as total_pagado,
+                COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
+                COUNT(CASE WHEN t.estado='pendiente'      THEN 1 END) as cant_pendientes,
+                COUNT(CASE WHEN t.estado='aprobado'       THEN 1 END) as cant_aprobados,
+                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
+                COUNT(CASE WHEN t.estado='pagado'         THEN 1 END) as cant_pagados,
+                COUNT(CASE WHEN t.estado='rechazado'      THEN 1 END) as cant_rechazados
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id = t.agente_id"""
+        params = []
+        if anio:
+            q += f" AND {_year_filter('t.fecha_gasto')}"
+            params.append(_yp(anio))
+        q += " WHERE a.activo = 1 GROUP BY a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit ORDER BY a.nombre"
+        cur.execute(q, params)
+        rows = _rows(cur)
+        result = []
+        for d in rows:
+            subtotal = d["total_aprobado"] + d["total_debito"] + d["total_pagado"]
+            d["tope_efectivo"] = 0
+            d["a_transferir"]  = subtotal
+            d["excedente"]     = 0
+            result.append(d)
+        return result
+
 # ── TOPES ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/topes")
@@ -520,25 +588,6 @@ def configurar_tope(data: PeriodoTope):
             """, (data.agente_id, data.anio, data.mes, data.tope_override))
     return {"mensaje": "Tope configurado"}
 
-
-# ── ELIMINAR AGENTE ───────────────────────────────────────────────────────────
-
-@app.delete("/api/agentes/{agente_id}")
-def eliminar_agente(agente_id: int, forzar: bool = False):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) as n FROM tickets WHERE agente_id={PH}", (agente_id,))
-        row = _row(cur)
-        cant = row["n"] if row else 0
-        if cant > 0 and not forzar:
-            raise HTTPException(409, f"El agente tiene {cant} ticket(s). Usar forzar=true para eliminar junto con sus tickets.")
-        if forzar:
-            cur.execute(f"DELETE FROM periodos WHERE agente_id={PH}", (agente_id,))
-            cur.execute(f"DELETE FROM tickets WHERE agente_id={PH}", (agente_id,))
-        cur.execute(f"DELETE FROM agentes WHERE id={PH}", (agente_id,))
-    return {"mensaje": "Agente eliminado"}
-
-
 # ── IMPORTACIÓN MASIVA EXCEL ──────────────────────────────────────────────────
 
 class ImportResult(BaseModel):
@@ -549,7 +598,6 @@ class ImportResult(BaseModel):
 
 @app.get("/api/importar/modelo")
 def descargar_modelo():
-    """Genera y descarga el Excel modelo para carga masiva de tickets."""
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -557,7 +605,6 @@ def descargar_modelo():
     ws = wb.active
     ws.title = "Tickets"
 
-    # Header
     ws.merge_cells("A1:G1")
     ws["A1"] = "SINDICATO ATE — Plantilla de Importación Masiva de Tickets"
     ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
@@ -575,7 +622,6 @@ def descargar_modelo():
         ws.column_dimensions[chr(64+c)].width = w
     ws.row_dimensions[2].height = 32
 
-    # Instrucciones en fila 3
     ws.merge_cells("A3:G3")
     ws["A3"] = "⚠ IMPORTANTE: agente_nombre debe coincidir EXACTAMENTE con el nombre registrado en el sistema. fecha_gasto formato: 15/03/2026 (DD/MM/AAAA). valor: solo números."
     ws["A3"].font = Font(size=10, color="7B341E")
@@ -583,7 +629,6 @@ def descargar_modelo():
     ws["A3"].alignment = Alignment(wrap_text=True)
     ws.row_dimensions[3].height = 28
 
-    # Filas de ejemplo
     ejemplos = [
         ("Seccional Buenos Aires", "05/03/2026", "Transporte", "FC-0001-00001", "Viaje a sede central", 12500, ""),
         ("Seccional La Plata",     "07/03/2026", "Combustible","FC-0004-00002", "Carga nafta camioneta", 8500, ""),
@@ -596,7 +641,6 @@ def descargar_modelo():
             if c == 6:
                 cell.number_format = '#,##0.00'
 
-    # Hoja de referencia de agentes
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT nombre FROM agentes WHERE activo=1 ORDER BY nombre")
@@ -623,10 +667,6 @@ def descargar_modelo():
 
 @app.post("/api/importar/tickets")
 async def importar_tickets(request: dict):
-    """
-    Recibe lista de tickets desde el frontend (parseado del Excel).
-    Verifica duplicados por (agente_nombre, fecha_gasto, comprobante, valor).
-    """
     filas = request.get("filas", [])
     if not filas:
         raise HTTPException(400, "No hay filas para importar")
@@ -638,22 +678,16 @@ async def importar_tickets(request: dict):
 
     with get_db() as conn:
         cur = conn.cursor()
-
-        # Obtener período activo
         pp = _get_periodo_abierto(conn)
         pp_id = pp["id"] if pp else None
 
-        # Cargar mapa agente_nombre -> id
         cur.execute("SELECT id, nombre FROM agentes WHERE activo=1")
         agentes_map = {r["nombre"].strip().lower(): r["id"] for r in _rows(cur)}
-
-        # Cargar mapa categoria_nombre -> id
         cur.execute("SELECT id, nombre FROM categorias WHERE activa=1")
         cats_map = {r["nombre"].strip().lower(): r["id"] for r in _rows(cur)}
 
         for i, fila in enumerate(filas, 1):
-            fila_num = i + 3  # filas 4+ en el Excel (1=header titulo, 2=headers, 3=instruccion)
-
+            fila_num = i + 3
             agente_nombre = str(fila.get("agente_nombre", "")).strip()
             fecha_gasto   = str(fila.get("fecha_gasto", "")).strip()
             categoria     = str(fila.get("categoria", "")).strip()
@@ -661,28 +695,24 @@ async def importar_tickets(request: dict):
             descripcion   = str(fila.get("descripcion", "")).strip() or None
             valor_raw     = fila.get("valor", "")
 
-            # Validaciones básicas
             if not agente_nombre:
                 errores.append(f"Fila {fila_num}: agente_nombre vacío"); continue
             if not fecha_gasto:
                 errores.append(f"Fila {fila_num}: fecha_gasto vacía"); continue
 
-            # Buscar agente (case-insensitive)
             agente_id = agentes_map.get(agente_nombre.lower())
             if not agente_id:
                 errores.append(f"Fila {fila_num}: Agente '{agente_nombre}' no encontrado en el sistema"); continue
 
-            # Validar fecha — aceptar DD/MM/AAAA (principal) o AAAA-MM-DD (fallback)
             try:
                 dt = datetime.strptime(fecha_gasto, "%d/%m/%Y")
                 fecha_gasto = dt.strftime("%Y-%m-%d")
             except ValueError:
                 try:
-                    datetime.strptime(fecha_gasto, "%Y-%m-%d")  # ya está en formato correcto
+                    datetime.strptime(fecha_gasto, "%Y-%m-%d")
                 except:
                     errores.append(f"Fila {fila_num}: Fecha inválida '{fecha_gasto}' — usar formato DD/MM/AAAA"); continue
 
-            # Validar valor
             try:
                 valor = float(str(valor_raw).replace(",", ".").replace("$", "").strip())
                 if valor <= 0:
@@ -690,10 +720,8 @@ async def importar_tickets(request: dict):
             except:
                 errores.append(f"Fila {fila_num}: Valor inválido '{valor_raw}'"); continue
 
-            # Categoría opcional
             categoria_id = cats_map.get(categoria.lower()) if categoria else None
 
-            # Verificar duplicado: mismo agente + fecha + comprobante + valor
             dup_check = [agente_id, fecha_gasto, valor]
             dup_q = f"SELECT id FROM tickets WHERE agente_id={PH} AND fecha_gasto={PH} AND valor={PH}"
             if comprobante:
@@ -707,7 +735,6 @@ async def importar_tickets(request: dict):
                                  "fecha": fecha_gasto, "valor": valor, "ticket_existente": existing["id"]})
                 continue
 
-            # Insertar
             new_id = _insert(conn,
                 f"INSERT INTO tickets (agente_id,fecha_gasto,categoria_id,comprobante,descripcion,valor,periodo_pago_id) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH})",
                 (agente_id, fecha_gasto, categoria_id, comprobante, descripcion, valor, pp_id))
@@ -738,7 +765,6 @@ def exportar_excel_custom(
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 
-    # Obtener tickets con filtros
     with get_db() as conn:
         cur = conn.cursor()
         q = """SELECT t.*, a.nombre as agente_nombre, a.cuit, a.cbu, a.banco, a.alias,
@@ -751,7 +777,6 @@ def exportar_excel_custom(
         if agente_id:
             q += f" AND t.agente_id={PH}"; params.append(agente_id)
         if estado:
-            # Normalizar: puede llegar como str o list dependiendo de FastAPI/querystring
             if isinstance(estado, str):
                 estado = [estado]
             placeholders = ",".join([PH] * len(estado))
@@ -773,7 +798,6 @@ def exportar_excel_custom(
             if t.get("fecha_gasto") and not isinstance(t["fecha_gasto"], str):
                 t["fecha_gasto"] = t["fecha_gasto"].strftime("%Y-%m-%d")
 
-    # Título dinámico
     partes = []
     if anio and mes:  partes.append(f"{calendar.month_name[mes].upper()} {anio}")
     elif anio:        partes.append(str(anio))
@@ -818,7 +842,6 @@ def exportar_excel_custom(
                 cell.fill = PatternFill("solid", fgColor=color)
                 if c in (6,8): cell.number_format = '"$"#,##0.00'
 
-        # Fila totales
         tr = len(tickets) + 3
         ws.cell(row=tr, column=5, value="TOTAL").font = Font(bold=True)
         ws.cell(row=tr, column=6, value=sum(t["valor"] for t in tickets)).number_format = '"$"#,##0.00'
@@ -845,7 +868,6 @@ def exportar_excel_custom(
         ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws2.row_dimensions[1].height = 26
 
-        # CAMBIO: sin CUIT/CBU/Banco. "Tope" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
         hdrs2 = ["Agente","Total Presentado","Aprobado","Pagado","TOTAL"]
         for c, h in enumerate(hdrs2, 1):
             cell = ws2.cell(row=2, column=c, value=h)
@@ -857,7 +879,7 @@ def exportar_excel_custom(
             tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
             aprobado = ag["total_aprobado"] + ag["total_debito"]
             pagado = ag["total_pagado"]
-            total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
+            total_row = aprobado + pagado
             vals = [ag["nombre"], tp, aprobado, pagado, total_row]
             for c, v in enumerate(vals, 1):
                 cell = ws2.cell(row=ri, column=c, value=v)
@@ -900,7 +922,6 @@ def exportar_excel_custom(
             row += 2
         for col in "ABCD": ws3.column_dimensions[col].width = 28
 
-    # Partes del nombre de archivo
     fname_parts = ["export_ATE"]
     if anio: fname_parts.append(str(anio))
     if mes:  fname_parts.append(f"{mes:02d}")
@@ -923,7 +944,6 @@ def exportar_excel(anio: int, mes: int):
     nombre_mes   = calendar.month_name[mes]
     wb = openpyxl.Workbook()
 
-    # Hoja 1: Transferencias
     ws1 = wb.active; ws1.title = "Transferencias"
     ws1.merge_cells("A1:E1")
     ws1["A1"] = f"SINDICATO ATE — REINTEGRO DE VIÁTICOS {nombre_mes.upper()} {anio}"
@@ -932,7 +952,6 @@ def exportar_excel(anio: int, mes: int):
     ws1["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 30
 
-    # CAMBIO: sin CUIT/CBU/Banco. "Tope Mensual" -> "Pagado", "A TRANSFERIR" -> "TOTAL" (Aprobado + Pagado, sin tope)
     hdrs = ["Agente","Total Presentado","Total Aprobado","Pagado","TOTAL"]
     for c, h in enumerate(hdrs, 1):
         cell = ws1.cell(row=2, column=c, value=h)
@@ -945,7 +964,7 @@ def exportar_excel(anio: int, mes: int):
         tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
         aprobado = ag["total_aprobado"] + ag["total_debito"]
         pagado = ag["total_pagado"]
-        total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
+        total_row = aprobado + pagado
         vals = [ag["nombre"], tp, aprobado, pagado, total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
@@ -961,7 +980,6 @@ def exportar_excel(anio: int, mes: int):
     for i, w in enumerate([30,18,18,18,18], 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
 
-    # Hoja 2: Detalle de Tickets
     ws2 = wb.create_sheet("Detalle de Tickets")
     ws2.merge_cells("A1:I1")
     ws2["A1"] = f"DETALLE — {nombre_mes.upper()} {anio}"
@@ -984,7 +1002,6 @@ def exportar_excel(anio: int, mes: int):
     for col, w in zip("ABCDEFGHI",[28,12,16,16,30,14,14,14,32]):
         ws2.column_dimensions[col].width = w
 
-    # Hoja 3: Resumen Semanal
     ws3 = wb.create_sheet("Resumen Semanal")
     ws3.merge_cells("A1:D1")
     ws3["A1"] = f"RESUMEN SEMANAL — {nombre_mes.upper()} {anio}"
@@ -1048,23 +1065,23 @@ def exportar_pdf(anio: int, mes: int):
     ht.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),AZ),("ROWPADDING",(0,0),(-1,-1),8),
                              ("TOPPADDING",(0,0),(-1,0),14),("BOTTOMPADDING",(0,-1),(-1,-1),14)]))
 
-    hdrs = ["Agente","CUIT","CBU","Banco/Alias","Total Presentado","Aprobado","Tope","A TRANSFERIR"]
+    hdrs = ["Agente","Total Presentado","Aprobado","Pagado","TOTAL"]
     td = [hdrs]; total = 0
     for ag in resumen_data:
         tp = ag["total_aprobado"] + ag["total_debito"] + ag["total_pendiente"]
         ta = ag["total_aprobado"] + ag["total_debito"]
-        td.append([ag["nombre"], ag.get("cuit") or "-", ag.get("cbu") or "-",
-                   ag.get("banco") or ag.get("alias") or "-",
-                   f"${tp:,.2f}", f"${ta:,.2f}", f"${ag['tope_efectivo']:,.2f}", f"${ag['a_transferir']:,.2f}"])
-        total += ag["a_transferir"]
-    td.append(["","","","TOTAL","","","", f"${total:,.2f}"])
+        pagado = ag["total_pagado"]
+        total_row = ta + pagado
+        td.append([ag["nombre"], f"${tp:,.2f}", f"${ta:,.2f}", f"${pagado:,.2f}", f"${total_row:,.2f}"])
+        total += total_row
+    td.append(["","","","TOTAL", f"${total:,.2f}"])
 
-    t = Table(td, colWidths=[5.5*cm,2.8*cm,4.2*cm,3.5*cm,2.8*cm,2.8*cm,2.3*cm,2.8*cm], repeatRows=1)
+    t = Table(td, colWidths=[8*cm,4.5*cm,4.5*cm,4.5*cm,4.5*cm], repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),AM),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),9),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),10),
         ("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-        ("FONTSIZE",(0,1),(-1,-1),8),("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,AC]),
+        ("FONTSIZE",(0,1),(-1,-1),9),("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,AC]),
         ("BACKGROUND",(0,-1),(-1,-1),AZ),("TEXTCOLOR",(0,-1),(-1,-1),colors.white),
         ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),
         ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#CCCCCC")),("ROWPADDING",(0,0),(-1,-1),6),
@@ -1190,10 +1207,6 @@ def frontend():
     with open(os.path.join(BASE_DIR, "templates", "index.html"), encoding="utf-8") as f:
         return f.read()
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
-
 # ── ADJUNTOS ──────────────────────────────────────────────────────────────────
 
 from fastapi import UploadFile, File
@@ -1304,7 +1317,6 @@ def listar_cierres():
 def cerrar_periodo(anio: int, mes: int, usuario: Optional[str] = None):
     with get_db() as conn:
         cur = conn.cursor()
-        # Verificar que no haya tickets pendientes
         cur.execute(f"""SELECT COUNT(*) as n FROM tickets
                     WHERE estado='pendiente' AND {_year_filter('fecha_gasto')} AND {_month_filter('fecha_gasto')}""",
                     (_yp(anio), _mp(mes)))
@@ -1341,221 +1353,6 @@ def estado_periodo(anio: int, mes: int):
         cur.execute(f"SELECT * FROM periodos_cierre WHERE anio={PH} AND mes={PH}", (anio, mes))
         row = _row(cur)
         return {"cerrado": bool(row and row.get("cerrado")), "detalle": row}
-
-# ── REPORTES ──────────────────────────────────────────────────────────────────
-
-@app.get("/api/reportes/por_categoria")
-def reporte_por_categoria(anio: Optional[int] = None, mes: Optional[int] = None):
-    with get_db() as conn:
-        cur = conn.cursor()
-        q = """SELECT c.nombre as categoria,
-                      COUNT(*) as cantidad,
-                      SUM(t.valor) as total_presentado,
-                      SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
-                      COUNT(CASE WHEN t.estado='aprobado' THEN 1 END) as cant_aprobados,
-                      COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as cant_rechazados
-               FROM tickets t
-               LEFT JOIN categorias c ON t.categoria_id = c.id
-               WHERE 1=1"""
-        params = []
-        if anio:
-            q += f" AND {_year_filter('t.fecha_gasto')}"; params.append(_yp(anio))
-        if mes:
-            q += f" AND {_month_filter('t.fecha_gasto')}"; params.append(_mp(mes))
-        q += " GROUP BY c.nombre ORDER BY total_aprobado DESC"
-        cur.execute(q, params)
-        return _rows(cur)
-
-@app.get("/api/reportes/mensual_anual")
-def reporte_mensual_anual(anio: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        if USE_PG:
-            cur.execute("""
-                SELECT EXTRACT(MONTH FROM fecha_gasto)::int as mes,
-                       COUNT(*) as cantidad,
-                       SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
-                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
-                FROM tickets WHERE EXTRACT(YEAR FROM fecha_gasto) = %s
-                GROUP BY mes ORDER BY mes
-            """, (anio,))
-        else:
-            cur.execute("""
-                SELECT CAST(strftime('%m', fecha_gasto) AS INTEGER) as mes,
-                       COUNT(*) as cantidad,
-                       SUM(valor) as total_presentado,
-                       SUM(CASE WHEN estado IN ('aprobado','debito_parcial','pagado') THEN valor_aprobado ELSE 0 END) as total_aprobado,
-                       COUNT(CASE WHEN estado='pendiente' THEN 1 END) as pendientes
-                FROM tickets WHERE strftime('%Y', fecha_gasto) = ?
-                GROUP BY mes ORDER BY mes
-            """, (str(anio),))
-        return _rows(cur)
-
-@app.get("/api/reportes/por_agente_anual")
-def reporte_por_agente_anual(anio: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"""
-            SELECT a.nombre,
-                   COUNT(t.id) as total_tickets,
-                   SUM(t.valor) as total_presentado,
-                   SUM(CASE WHEN t.estado IN ('aprobado','debito_parcial','pagado') THEN t.valor_aprobado ELSE 0 END) as total_aprobado,
-                   COUNT(CASE WHEN t.estado='rechazado' THEN 1 END) as rechazados,
-                   COUNT(CASE WHEN t.estado='pendiente' THEN 1 END) as pendientes
-            FROM agentes a
-            LEFT JOIN tickets t ON a.id = t.agente_id AND {_year_filter('t.fecha_gasto')}
-            WHERE a.activo = 1
-            GROUP BY a.id, a.nombre ORDER BY total_aprobado DESC NULLS LAST
-        """, (_yp(anio),))
-        return _rows(cur)
-
-# ── ADJUNTOS ──────────────────────────────────────────────────────────────────
-
-from fastapi import UploadFile, File
-from fastapi.responses import Response
-
-@app.post("/api/tickets/{ticket_id}/adjunto")
-async def subir_adjunto(ticket_id: int, archivo: UploadFile = File(...)):
-    MAX_MB = 5
-    data = await archivo.read()
-    if len(data) > MAX_MB * 1024 * 1024:
-        raise HTTPException(413, f"El archivo supera {MAX_MB}MB")
-    allowed = {"image/jpeg","image/png","image/gif","image/webp","application/pdf"}
-    mime = archivo.content_type or "application/octet-stream"
-    if mime not in allowed:
-        raise HTTPException(415, "Solo se permiten imagenes (JPG, PNG) o PDF")
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT id FROM tickets WHERE id={PH}", (ticket_id,))
-        if not _row(cur):
-            raise HTTPException(404, "Ticket no encontrado")
-        if USE_PG:
-            import psycopg2
-            cur.execute(
-                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (%s,%s,%s,%s) RETURNING id",
-                (ticket_id, archivo.filename, mime, psycopg2.Binary(data))
-            )
-            new_id = cur.fetchone()[0]
-        else:
-            cur.execute(
-                "INSERT INTO adjuntos (ticket_id,nombre_archivo,mime_type,datos) VALUES (?,?,?,?)",
-                (ticket_id, archivo.filename, mime, data)
-            )
-            new_id = cur.lastrowid
-    return {"id": new_id, "nombre": archivo.filename, "mime_type": mime, "size": len(data)}
-
-@app.get("/api/tickets/{ticket_id}/adjuntos")
-def listar_adjuntos(ticket_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT id,nombre_archivo,mime_type,subido_en FROM adjuntos WHERE ticket_id={PH} ORDER BY subido_en", (ticket_id,))
-        rows = _rows(cur)
-        for r in rows:
-            if r.get("subido_en") and not isinstance(r["subido_en"], str):
-                r["subido_en"] = r["subido_en"].isoformat()
-        return rows
-
-@app.get("/api/adjuntos/{adjunto_id}")
-def descargar_adjunto(adjunto_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM adjuntos WHERE id={PH}", (adjunto_id,))
-        row = _row(cur)
-        if not row:
-            raise HTTPException(404, "Adjunto no encontrado")
-    data = bytes(row["datos"]) if not isinstance(row["datos"], bytes) else row["datos"]
-    return Response(content=data, media_type=row["mime_type"],
-                    headers={"Content-Disposition": f'inline; filename="{row["nombre_archivo"]}"'})
-
-@app.delete("/api/adjuntos/{adjunto_id}")
-def eliminar_adjunto(adjunto_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM adjuntos WHERE id={PH}", (adjunto_id,))
-    return {"mensaje": "Adjunto eliminado"}
-
-# ── HISTORIAL ─────────────────────────────────────────────────────────────────
-
-@app.get("/api/tickets/{ticket_id}/historial")
-def obtener_historial(ticket_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM historial WHERE ticket_id={PH} ORDER BY fecha DESC", (ticket_id,))
-        rows = _rows(cur)
-        for r in rows:
-            if r.get("fecha") and not isinstance(r["fecha"], str):
-                r["fecha"] = r["fecha"].isoformat()
-        return rows
-
-def _registrar_historial(conn, ticket_id, campo, anterior, nuevo, usuario=None):
-    cur = conn.cursor()
-    if USE_PG:
-        cur.execute(
-            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (%s,%s,%s,%s,%s)",
-            (ticket_id, campo, str(anterior) if anterior is not None else None,
-             str(nuevo) if nuevo is not None else None, usuario)
-        )
-    else:
-        cur.execute(
-            "INSERT INTO historial (ticket_id,campo,valor_anterior,valor_nuevo,usuario) VALUES (?,?,?,?,?)",
-            (ticket_id, campo, str(anterior) if anterior is not None else None,
-             str(nuevo) if nuevo is not None else None, usuario)
-        )
-
-# ── CIERRE DE PERIODO ─────────────────────────────────────────────────────────
-
-@app.get("/api/periodos_cierre/estado")
-def estado_periodo(anio: int, mes: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM periodos_cierre WHERE anio={PH} AND mes={PH}", (anio, mes))
-        row = _row(cur)
-        return {"cerrado": bool(row and row.get("cerrado")), "detalle": row}
-
-@app.get("/api/periodos_cierre")
-def listar_cierres():
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM periodos_cierre ORDER BY anio DESC, mes DESC")
-        rows = _rows(cur)
-        for r in rows:
-            if r.get("cerrado_en") and not isinstance(r["cerrado_en"], str):
-                r["cerrado_en"] = r["cerrado_en"].isoformat()
-        return rows
-
-@app.post("/api/periodos_cierre")
-def cerrar_periodo(anio: int, mes: int, usuario: Optional[str] = None):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"""SELECT COUNT(*) as n FROM tickets
-                    WHERE estado='pendiente' AND {_year_filter('fecha_gasto')} AND {_month_filter('fecha_gasto')}""",
-                    (_yp(anio), _mp(mes)))
-        row = _row(cur)
-        pendientes = row["n"] if row else 0
-        if pendientes > 0:
-            raise HTTPException(409, f"Hay {pendientes} ticket(s) pendientes de revision. Revisalos antes de cerrar el periodo.")
-        if USE_PG:
-            cur.execute("""
-                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
-                VALUES (%s,%s,1,%s,CURRENT_TIMESTAMP)
-                ON CONFLICT (anio,mes) DO UPDATE SET cerrado=1,cerrado_por=EXCLUDED.cerrado_por,cerrado_en=CURRENT_TIMESTAMP
-            """, (anio, mes, usuario))
-        else:
-            cur.execute("""
-                INSERT INTO periodos_cierre (anio,mes,cerrado,cerrado_por,cerrado_en)
-                VALUES (?,?,1,?,CURRENT_TIMESTAMP)
-                ON CONFLICT(anio,mes) DO UPDATE SET cerrado=1,cerrado_por=excluded.cerrado_por,cerrado_en=CURRENT_TIMESTAMP
-            """, (anio, mes, usuario))
-    return {"mensaje": f"Periodo {mes}/{anio} cerrado correctamente"}
-
-@app.post("/api/periodos_cierre/reabrir")
-def reabrir_periodo(anio: int, mes: int, usuario: Optional[str] = None):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"UPDATE periodos_cierre SET cerrado=0,cerrado_por={PH},cerrado_en=CURRENT_TIMESTAMP WHERE anio={PH} AND mes={PH}",
-                    (usuario, anio, mes))
-    return {"mensaje": f"Periodo {mes}/{anio} reabierto"}
 
 # ── REPORTES ──────────────────────────────────────────────────────────────────
 
@@ -1649,7 +1446,6 @@ def _acta_to_dict(r):
     return d
 
 def _gen_numero_acta(conn):
-    """Genera número correlativo tipo 0001/2026"""
     anio = datetime.now().year
     cur = conn.cursor()
     if USE_PG:
@@ -1682,14 +1478,12 @@ def listar_actas(buscar: Optional[str] = None, tipo: Optional[str] = None,
                 q += f" AND strftime('%m', fecha) = {PH}"
             params.append(_mp(mes))
         if buscar:
+            p = f"%{buscar}%"
             if USE_PG:
                 q += f" AND (titulo ILIKE {PH} OR cuerpo ILIKE {PH} OR participantes ILIKE {PH} OR numero_acta ILIKE {PH})"
-                p = f"%{buscar}%"
-                params += [p, p, p, p]
             else:
                 q += f" AND (titulo LIKE {PH} OR cuerpo LIKE {PH} OR participantes LIKE {PH} OR numero_acta LIKE {PH})"
-                p = f"%{buscar}%"
-                params += [p, p, p, p]
+            params += [p, p, p, p]
         q += " ORDER BY fecha DESC, id DESC"
         cur.execute(q, params)
         return [_acta_to_dict(r) for r in _rows(cur)]
@@ -1779,7 +1573,6 @@ def exportar_actas_excel(anio: Optional[int] = None):
         fecha_fmt = ""
         if a.get("fecha"):
             try:
-                from datetime import date
                 fd = a["fecha"][:10]
                 parts = fd.split("-")
                 fecha_fmt = f"{parts[2]}/{parts[1]}/{parts[0]}"
@@ -1805,7 +1598,6 @@ def exportar_actas_excel(anio: Optional[int] = None):
     for col, w in zip("ABCDEFGH", col_widths):
         ws.column_dimensions[col].width = w
 
-    # Auto-height for body rows
     for row in ws.iter_rows(min_row=3, max_row=len(actas)+2):
         ws.row_dimensions[row[0].row].height = 40
 
@@ -1814,213 +1606,6 @@ def exportar_actas_excel(anio: Optional[int] = None):
     wb.save(path)
     return FileResponse(path, filename=filename,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ── ACTAS ─────────────────────────────────────────────────────────────────────
-
-TIPOS_ACTA = ["Entrega de Viaticos", "Reunion / Asamblea", "Llamado / Citacion", "Resolucion / Acuerdo", "Otro"]
-
-class ActaCreate(BaseModel):
-    fecha: str
-    tipo: str
-    titulo: str
-    cuerpo: Optional[str] = None
-    participantes: Optional[str] = None
-    redactado_por: Optional[str] = None
-
-class ActaUpdate(BaseModel):
-    fecha: Optional[str] = None
-    tipo: Optional[str] = None
-    titulo: Optional[str] = None
-    cuerpo: Optional[str] = None
-    participantes: Optional[str] = None
-    redactado_por: Optional[str] = None
-
-def _acta_to_dict(r):
-    d = dict(r)
-    for k in ("fecha", "creado_en", "modificado_en"):
-        if d.get(k) and not isinstance(d[k], str):
-            d[k] = d[k].isoformat()
-    return d
-
-def _gen_numero_acta(conn):
-    anio = datetime.now().year
-    cur = conn.cursor()
-    if USE_PG:
-        cur.execute("SELECT COUNT(*) as n FROM actas WHERE EXTRACT(YEAR FROM fecha::date) = %s", (anio,))
-    else:
-        cur.execute("SELECT COUNT(*) as n FROM actas WHERE strftime('%Y', fecha) = ?", (str(anio),))
-    row = _row(cur)
-    n = (row["n"] if row else 0) + 1
-    return f"{n:04d}/{anio}"
-
-@app.get("/api/actas")
-def listar_actas(buscar: Optional[str] = None, tipo: Optional[str] = None,
-                 anio: Optional[int] = None, mes: Optional[int] = None):
-    with get_db() as conn:
-        cur = conn.cursor()
-        q = "SELECT * FROM actas WHERE 1=1"
-        params = []
-        if tipo:
-            q += f" AND tipo = {PH}"; params.append(tipo)
-        if anio:
-            if USE_PG:
-                q += " AND EXTRACT(YEAR FROM fecha::date) = %s"
-            else:
-                q += " AND strftime('%Y', fecha) = ?"
-            params.append(_yp(anio))
-        if mes:
-            if USE_PG:
-                q += " AND EXTRACT(MONTH FROM fecha::date) = %s"
-            else:
-                q += " AND strftime('%m', fecha) = ?"
-            params.append(_mp(mes))
-        if buscar:
-            p = f"%{buscar}%"
-            if USE_PG:
-                q += " AND (titulo ILIKE %s OR cuerpo ILIKE %s OR participantes ILIKE %s OR numero_acta ILIKE %s)"
-                params += [p, p, p, p]
-            else:
-                q += " AND (titulo LIKE ? OR cuerpo LIKE ? OR participantes LIKE ? OR numero_acta LIKE ?)"
-                params += [p, p, p, p]
-        q += " ORDER BY fecha DESC, id DESC"
-        cur.execute(q, params)
-        return [_acta_to_dict(r) for r in _rows(cur)]
-
-@app.get("/api/actas/{acta_id}")
-def obtener_acta(acta_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM actas WHERE id = {PH}", (acta_id,))
-        row = _row(cur)
-        if not row:
-            raise HTTPException(404, "Acta no encontrada")
-        return _acta_to_dict(row)
-
-@app.post("/api/actas")
-def crear_acta(data: ActaCreate):
-    with get_db() as conn:
-        numero = _gen_numero_acta(conn)
-        if USE_PG:
-            new_id = _insert(conn,
-                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
-        else:
-            new_id = _insert(conn,
-                "INSERT INTO actas (numero_acta,fecha,tipo,titulo,cuerpo,participantes,redactado_por) VALUES (?,?,?,?,?,?,?)",
-                (numero, data.fecha, data.tipo, data.titulo, data.cuerpo, data.participantes, data.redactado_por))
-    return {"id": new_id, "numero_acta": numero, "mensaje": "Acta creada"}
-
-@app.put("/api/actas/{acta_id}")
-def actualizar_acta(acta_id: int, data: ActaUpdate):
-    fields = {k: v for k, v in data.dict().items() if v is not None}
-    if not fields:
-        raise HTTPException(400, "Nada para actualizar")
-    fields["modificado_en"] = datetime.now().isoformat()
-    with get_db() as conn:
-        cur = conn.cursor()
-        if USE_PG:
-            set_clause = ", ".join(f"{k}=%s" for k in fields)
-            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=%s", list(fields.values()) + [acta_id])
-        else:
-            set_clause = ", ".join(f"{k}=?" for k in fields)
-            cur.execute(f"UPDATE actas SET {set_clause} WHERE id=?", list(fields.values()) + [acta_id])
-    return {"mensaje": "Acta actualizada"}
-
-@app.delete("/api/actas/{acta_id}")
-def eliminar_acta(acta_id: int):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM actas WHERE id = {PH}", (acta_id,))
-    return {"mensaje": "Acta eliminada"}
-
-@app.get("/api/actas/exportar/excel")
-def exportar_actas_excel(anio: Optional[int] = None):
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment as XlAlign
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Libro de Actas"
-    titulo_hdr = f"SINDICATO ATE - LIBRO DE ACTAS{' - '+str(anio) if anio else ''}"
-    ws.merge_cells("A1:H1")
-    ws["A1"] = titulo_hdr
-    ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
-    ws["A1"].alignment = XlAlign(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 28
-    hdrs = ["N Acta", "Fecha", "Tipo", "Titulo", "Participantes", "Contenido", "Redactado por", "Registrado"]
-    for c, h in enumerate(hdrs, 1):
-        cell = ws.cell(row=2, column=c, value=h)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="2d6a9f")
-        cell.alignment = XlAlign(horizontal="center")
-    ws.row_dimensions[2].height = 20
-    tipo_colores = {
-        "Entrega de Viaticos":   "D4EDDA",
-        "Reunion / Asamblea":    "D1ECF1",
-        "Llamado / Citacion":    "FFF3CD",
-        "Resolucion / Acuerdo":  "EDE7F6",
-        "Otro":                  "F8F9FA",
-    }
-    actas_data = listar_actas(anio=anio)
-    for ri, a in enumerate(actas_data, 3):
-        color = tipo_colores.get(a.get("tipo", ""), "FFFFFF")
-        fecha_fmt = ""
-        if a.get("fecha"):
-            try:
-                fd = a["fecha"][:10].split("-")
-                fecha_fmt = f"{fd[2]}/{fd[1]}/{fd[0]}"
-            except:
-                fecha_fmt = a.get("fecha", "")
-        vals = [a.get("numero_acta",""), fecha_fmt, a.get("tipo",""), a.get("titulo",""),
-                a.get("participantes","") or "", a.get("cuerpo","") or "",
-                a.get("redactado_por","") or "", (a.get("creado_en","") or "")[:10]]
-        for c, v in enumerate(vals, 1):
-            cell = ws.cell(row=ri, column=c, value=v)
-            cell.fill = PatternFill("solid", fgColor=color)
-            cell.alignment = XlAlign(wrap_text=(c in (5,6)), vertical="top")
-        ws.row_dimensions[ri].height = 40
-    for col, w in zip("ABCDEFGH", [12,12,22,36,30,60,18,12]):
-        ws.column_dimensions[col].width = w
-    filename = f"libro_actas_ATE{'_'+str(anio) if anio else ''}.xlsx"
-    path = os.path.join(EXPORTS_DIR, filename)
-    wb.save(path)
-    return FileResponse(path, filename=filename,
-                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-@app.get("/api/resumen/agrupado")
-def resumen_agrupado(anio: Optional[int] = None):
-    """Resumen por agente para año completo o todo el historial. Sin topes (no aplica)."""
-    with get_db() as conn:
-        cur = conn.cursor()
-        q = f"""
-            SELECT a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit,
-                COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
-                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
-                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
-                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END), 0) as total_pagado,
-                COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
-                COUNT(CASE WHEN t.estado='pendiente'      THEN 1 END) as cant_pendientes,
-                COUNT(CASE WHEN t.estado='aprobado'       THEN 1 END) as cant_aprobados,
-                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
-                COUNT(CASE WHEN t.estado='pagado'         THEN 1 END) as cant_pagados,
-                COUNT(CASE WHEN t.estado='rechazado'      THEN 1 END) as cant_rechazados
-            FROM agentes a
-            LEFT JOIN tickets t ON a.id = t.agente_id"""
-        params = []
-        if anio:
-            q += f" AND {_year_filter('t.fecha_gasto')}"
-            params.append(_yp(anio))
-        q += " WHERE a.activo = 1 GROUP BY a.id, a.nombre, a.tope_mensual, a.cbu, a.banco, a.alias, a.cuit ORDER BY a.nombre"
-        cur.execute(q, params)
-        rows = _rows(cur)
-        result = []
-        for d in rows:
-            subtotal = d["total_aprobado"] + d["total_debito"] + d["total_pagado"]
-            d["tope_efectivo"] = 0  # no aplica tope en vista anual/histórica
-            d["a_transferir"]  = subtotal
-            d["excedente"]     = 0
-            result.append(d)
-        return result
 
 # ── PERIODOS DE PAGO ──────────────────────────────────────────────────────────
 
@@ -2106,7 +1691,6 @@ def actualizar_periodo_pago(pp_id: int, data: PeriodoPagoUpdate):
 def cerrar_periodo_pago(pp_id: int, usuario: Optional[str] = None):
     with get_db() as conn:
         cur = conn.cursor()
-        # Verificar pendientes
         cur.execute(f"SELECT COUNT(*) as n FROM tickets WHERE periodo_pago_id={PH} AND estado='pendiente'", (pp_id,))
         row = _row(cur)
         pendientes = row["n"] if row else 0
@@ -2184,8 +1768,6 @@ def exportar_excel_periodo_pago(pp_id: int):
 
     wb = openpyxl.Workbook()
 
-    # Hoja 1: Resumen por agente
-    # CAMBIO: sin CUIT/CBU/Banco. "A Transferir" -> "TOTAL" (Aprobado + Pagado, sin tope)
     ws1 = wb.active
     ws1.title = "Resumen"
     ws1.merge_cells("A1:E1")
@@ -2204,7 +1786,7 @@ def exportar_excel_periodo_pago(pp_id: int):
     for ri, a in enumerate(resumen_data, 3):
         aprobado = a["total_aprobado"] + a["total_debito"]
         pagado = a["total_pagado"]
-        total_row = aprobado + pagado  # TOTAL = Aprobado + Pagado, sin tope
+        total_row = aprobado + pagado
         vals = [a["nombre"], aprobado, pagado, a["total_rechazado"], total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
@@ -2218,7 +1800,6 @@ def exportar_excel_periodo_pago(pp_id: int):
     for col, w in zip("ABCDE", [30, 16, 16, 16, 18]):
         ws1.column_dimensions[col].width = w
 
-    # Hoja 2: Detalle de tickets
     ws2 = wb.create_sheet("Detalle")
     ws2.merge_cells("A1:I1")
     ws2["A1"] = f"DETALLE DE TICKETS — PERÍODO {nombre_pp}"
@@ -2252,3 +1833,95 @@ def exportar_excel_periodo_pago(pp_id: int):
     wb.save(path)
     return FileResponse(path, filename=filename,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ── PRESUPUESTO POR PERÍODO DE PAGO ───────────────────────────────────────────
+
+@app.get("/api/presupuesto/{pp_id}")
+def obtener_presupuesto(pp_id: int):
+    """Devuelve presupuesto + aprobado + pagado + saldo del período."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM periodos_pago WHERE id={PH}", (pp_id,))
+        pp = _row(cur)
+        if not pp:
+            raise HTTPException(404, "Período no encontrado")
+
+        cur.execute(f"SELECT * FROM presupuestos_pago WHERE periodo_pago_id={PH}", (pp_id,))
+        presup = _row(cur)
+        monto = presup["monto"] if presup else 0
+
+        cur.execute(f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN estado='aprobado'       THEN valor_aprobado END),0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN estado='debito_parcial' THEN valor_aprobado END),0) as total_debito,
+                COALESCE(SUM(CASE WHEN estado='pagado'         THEN valor_aprobado END),0) as total_pagado
+            FROM tickets WHERE periodo_pago_id={PH}
+        """, (pp_id,))
+        tot = _row(cur) or {}
+
+    aprobado = (tot.get("total_aprobado") or 0) + (tot.get("total_debito") or 0)
+    pagado   = tot.get("total_pagado") or 0
+    comprometido = aprobado + pagado
+    saldo = monto - comprometido if monto > 0 else 0
+    pct_aprobado = (aprobado / monto * 100) if monto > 0 else 0
+    pct_pagado   = (pagado / monto * 100) if monto > 0 else 0
+    pct_usado    = (comprometido / monto * 100) if monto > 0 else 0
+
+    return {
+        "periodo_pago_id": pp_id,
+        "monto": monto,
+        "aprobado": aprobado,
+        "pagado": pagado,
+        "comprometido": comprometido,
+        "saldo": saldo,
+        "porcentaje_usado": round(pct_usado, 2),
+        "porcentaje_aprobado": round(pct_aprobado, 2),
+        "porcentaje_pagado": round(pct_pagado, 2),
+        "alerta_bajo_saldo": (saldo / monto < 0.20) if monto > 0 else False,
+        "excedido": (comprometido > monto) if monto > 0 else False,
+        "configurado": presup is not None,
+    }
+
+
+@app.post("/api/presupuesto")
+def setear_presupuesto(data: PresupuestoSet):
+    """Crea o actualiza el presupuesto de un período de pago."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id FROM periodos_pago WHERE id={PH}", (data.periodo_pago_id,))
+        if not _row(cur):
+            raise HTTPException(404, "Período no encontrado")
+
+        if USE_PG:
+            cur.execute("""
+                INSERT INTO presupuestos_pago (periodo_pago_id, monto, actualizado_por, actualizado_en)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (periodo_pago_id) DO UPDATE SET
+                    monto = EXCLUDED.monto,
+                    actualizado_por = EXCLUDED.actualizado_por,
+                    actualizado_en = CURRENT_TIMESTAMP
+            """, (data.periodo_pago_id, data.monto, data.actualizado_por))
+        else:
+            cur.execute("""
+                INSERT INTO presupuestos_pago (periodo_pago_id, monto, actualizado_por, actualizado_en)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(periodo_pago_id) DO UPDATE SET
+                    monto = excluded.monto,
+                    actualizado_por = excluded.actualizado_por,
+                    actualizado_en = CURRENT_TIMESTAMP
+            """, (data.periodo_pago_id, data.monto, data.actualizado_por))
+
+    return {"mensaje": "Presupuesto guardado", "monto": data.monto}
+
+
+@app.delete("/api/presupuesto/{pp_id}")
+def eliminar_presupuesto(pp_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM presupuestos_pago WHERE periodo_pago_id={PH}", (pp_id,))
+    return {"mensaje": "Presupuesto eliminado"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
