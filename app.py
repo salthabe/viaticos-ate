@@ -768,10 +768,12 @@ def exportar_excel_custom(
     with get_db() as conn:
         cur = conn.cursor()
         q = """SELECT t.*, a.nombre as agente_nombre, a.cuit, a.cbu, a.banco, a.alias,
-                      c.nombre as categoria_nombre
+                      c.nombre as categoria_nombre,
+                      pp.numero as pp_numero, pp.nombre as pp_nombre
                FROM tickets t
                LEFT JOIN agentes a ON t.agente_id = a.id
                LEFT JOIN categorias c ON t.categoria_id = c.id
+               LEFT JOIN periodos_pago pp ON t.periodo_pago_id = pp.id
                WHERE 1=1"""
         params = []
         if agente_id:
@@ -818,14 +820,14 @@ def exportar_excel_custom(
         ws.title = "Tickets"
         first = False
 
-        ws.merge_cells("A1:I1")
+        ws.merge_cells("A1:J1")
         ws["A1"] = f"SINDICATO ATE — TICKETS — {titulo_filtro}"
         ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
         ws["A1"].fill = PatternFill("solid", fgColor="1a3a5c")
         ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 26
 
-        hdrs = ["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Motivo"]
+        hdrs = ["Agente","Fecha","Categoría","Comprobante","Descripción","Valor","Estado","Aprobado","Motivo","Período de Pago"]
         for c, h in enumerate(hdrs, 1):
             cell = ws.cell(row=2, column=c, value=h)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -834,9 +836,14 @@ def exportar_excel_custom(
 
         for ri, t in enumerate(tickets, 3):
             color = colores.get(t["estado"], "FFFFFF")
+            if t.get("pp_numero"):
+                pp_label = f"P{t['pp_numero']} · {t.get('pp_nombre') or ''}".strip(" ·")
+            else:
+                pp_label = "Sin período"
             vals = [t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre",""),
                     t.get("comprobante",""), t.get("descripcion",""), t["valor"],
-                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo","")]
+                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo",""),
+                    pp_label]
             for c, v in enumerate(vals, 1):
                 cell = ws.cell(row=ri, column=c, value=v)
                 cell.fill = PatternFill("solid", fgColor=color)
@@ -849,7 +856,7 @@ def exportar_excel_custom(
         ws.cell(row=tr, column=8, value=sum(t.get("valor_aprobado") or 0 for t in tickets)).number_format = '"$"#,##0.00'
         ws.cell(row=tr, column=8).font = Font(bold=True)
 
-        for col, w in zip("ABCDEFGHI", [28,12,16,18,32,14,14,14,32]):
+        for col, w in zip("ABCDEFGHIJ", [28,12,16,18,32,14,14,14,32,22]):
             ws.column_dimensions[col].width = w
 
     if incluir_transferencias and anio and mes:
