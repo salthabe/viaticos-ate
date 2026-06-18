@@ -317,6 +317,10 @@ class TicketRevision(BaseModel):
     valor_aprobado: Optional[float] = None
     revisado_por: Optional[str] = None
 
+class RevisionMasiva(BaseModel):
+    ticket_ids: List[int]
+    revisado_por: Optional[str] = None
+
 class PeriodoTope(BaseModel):
     agente_id: int
     anio: int
@@ -450,6 +454,30 @@ def revisar_ticket(ticket_id: int, data: TicketRevision):
         if data.motivo_rechazo:
             _registrar_historial(conn, ticket_id, "motivo_rechazo", ticket.get("motivo_rechazo"), data.motivo_rechazo, data.revisado_por)
     return {"mensaje": "Ticket revisado"}
+
+@app.post("/api/tickets/revision_masiva")
+def revision_masiva(data: RevisionMasiva):
+    if not data.ticket_ids:
+        raise HTTPException(400, "No se recibieron tickets")
+    aprobados = 0
+    total = 0.0
+    with get_db() as conn:
+        cur = conn.cursor()
+        placeholders = ",".join([PH] * len(data.ticket_ids))
+        cur.execute(f"SELECT * FROM tickets WHERE id IN ({placeholders})", data.ticket_ids)
+        tickets = _rows(cur)
+        for t in tickets:
+            if t["estado"] != "pendiente":
+                continue
+            cur.execute(f"""UPDATE tickets SET estado={PH}, valor_aprobado={PH},
+                        revisado_en=CURRENT_TIMESTAMP, revisado_por={PH} WHERE id={PH}""",
+                        ("aprobado", t["valor"], data.revisado_por, t["id"]))
+            _registrar_historial(conn, t["id"], "estado", t["estado"], "aprobado", data.revisado_por)
+            aprobados += 1
+            total += t["valor"] or 0
+    ignorados = len(data.ticket_ids) - aprobados
+    return {"mensaje": f"{aprobados} ticket(s) aprobado(s)" + (f", {ignorados} ignorado(s)" if ignorados else ""),
+            "aprobados": aprobados, "ignorados": ignorados, "total": total}
 
 @app.delete("/api/tickets/{ticket_id}")
 def eliminar_ticket(ticket_id: int):
