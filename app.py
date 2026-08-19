@@ -912,18 +912,18 @@ def exportar_excel_custom(
                 pp_label = "Sin período"
             vals = [t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre",""),
                     t.get("comprobante",""), t.get("descripcion",""), t["valor"],
-                    t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo",""),
+                    t["estado"].upper(), t.get("valor_aprobado"), t.get("motivo_rechazo",""),
                     pp_label]
             for c, v in enumerate(vals, 1):
                 cell = ws.cell(row=ri, column=c, value=v)
                 cell.fill = PatternFill("solid", fgColor=color)
-                if c in (6,8): cell.number_format = '"$"#,##0.00'
+                if c in (6,8): cell.number_format = '#,##0.00'
 
         tr = len(tickets) + 3
         ws.cell(row=tr, column=5, value="TOTAL").font = Font(bold=True)
-        ws.cell(row=tr, column=6, value=sum(t["valor"] for t in tickets)).number_format = '"$"#,##0.00'
+        ws.cell(row=tr, column=6, value=sum(t["valor"] for t in tickets)).number_format = '#,##0.00'
         ws.cell(row=tr, column=6).font = Font(bold=True)
-        ws.cell(row=tr, column=8, value=sum(t.get("valor_aprobado") or 0 for t in tickets)).number_format = '"$"#,##0.00'
+        ws.cell(row=tr, column=8, value=sum(t.get("valor_aprobado") or 0 for t in tickets)).number_format = '#,##0.00'
         ws.cell(row=tr, column=8).font = Font(bold=True)
 
         for col, w in zip("ABCDEFGHIJ", [28,12,16,18,32,14,14,14,32,22]):
@@ -960,14 +960,14 @@ def exportar_excel_custom(
             vals = [ag["nombre"], tp, aprobado, pagado, total_row]
             for c, v in enumerate(vals, 1):
                 cell = ws2.cell(row=ri, column=c, value=v)
-                if c in (2,3,4,5): cell.number_format = '"$"#,##0.00'
+                if c in (2,3,4,5): cell.number_format = '#,##0.00'
                 if ri % 2 == 0: cell.fill = PatternFill("solid", fgColor="EBF3FB")
             total_t += total_row
         tr2 = len(res) + 3
         ws2.cell(row=tr2, column=1, value="TOTAL").font = Font(bold=True)
         ct = ws2.cell(row=tr2, column=5, value=total_t)
         ct.font = Font(bold=True, color="FFFFFF"); ct.fill = PatternFill("solid", fgColor="1a3a5c")
-        ct.number_format = '"$"#,##0.00'
+        ct.number_format = '#,##0.00'
         for i, w in enumerate([30,18,18,18,18], 1):
             ws2.column_dimensions[get_column_letter(i)].width = w
 
@@ -991,11 +991,11 @@ def exportar_excel_custom(
                 ws3.cell(row=row,column=1,value=t["agente_nombre"])
                 ws3.cell(row=row,column=2,value=t["fecha_gasto"])
                 ws3.cell(row=row,column=3,value=t.get("descripcion",""))
-                ws3.cell(row=row,column=4,value=t.get("valor_aprobado",0)).number_format='"$"#,##0.00'
+                ws3.cell(row=row,column=4,value=t.get("valor_aprobado",0)).number_format='#,##0.00'
                 row += 1
             ws3.cell(row=row,column=3,value="TOTAL").font=Font(bold=True)
             ws3.cell(row=row,column=4,value=s["total"]).font=Font(bold=True)
-            ws3.cell(row=row,column=4).number_format='"$"#,##0.00'
+            ws3.cell(row=row,column=4).number_format='#,##0.00'
             row += 2
         for col in "ABCD": ws3.column_dimensions[col].width = 28
 
@@ -1045,7 +1045,7 @@ def exportar_excel(anio: int, mes: int):
         vals = [ag["nombre"], tp, aprobado, pagado, total_row]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
-            if c in (2,3,4,5): cell.number_format = '"$"#,##0.00'
+            if c in (2,3,4,5): cell.number_format = '#,##0.00'
             if ri % 2 == 0:    cell.fill = PatternFill("solid", fgColor="EBF3FB")
         total_transf += total_row
 
@@ -1053,7 +1053,7 @@ def exportar_excel(anio: int, mes: int):
     ws1.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True)
     ct = ws1.cell(row=tr, column=5, value=total_transf)
     ct.font = Font(bold=True, color="FFFFFF"); ct.fill = PatternFill("solid", fgColor="1a3a5c")
-    ct.number_format = '"$"#,##0.00'
+    ct.number_format = '#,##0.00'
     for i, w in enumerate([30,18,18,18,18], 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
 
@@ -1072,10 +1072,10 @@ def exportar_excel(anio: int, mes: int):
         color = colores.get(t["estado"], "FFFFFF")
         for c, v in enumerate([t["agente_nombre"],t["fecha_gasto"],t.get("categoria_nombre",""),
                                 t.get("comprobante",""),t.get("descripcion",""),t["valor"],
-                                t["estado"].upper(),t.get("valor_aprobado") or "",t.get("motivo_rechazo","")], 1):
+                                t["estado"].upper(),t.get("valor_aprobado"),t.get("motivo_rechazo","")], 1):
             cell = ws2.cell(row=ri, column=c, value=v)
             cell.fill = PatternFill("solid", fgColor=color)
-            if c in (6,8): cell.number_format = '"$"#,##0.00'
+            if c in (6,8): cell.number_format = '#,##0.00'
     for col, w in zip("ABCDEFGHI",[28,12,16,16,30,14,14,14,32]):
         ws2.column_dimensions[col].width = w
 
@@ -1097,11 +1097,11 @@ def exportar_excel(anio: int, mes: int):
             ws3.cell(row=row,column=1,value=t["agente_nombre"])
             ws3.cell(row=row,column=2,value=t["fecha_gasto"])
             ws3.cell(row=row,column=3,value=t.get("descripcion",""))
-            ws3.cell(row=row,column=4,value=t.get("valor_aprobado",0)).number_format = '"$"#,##0.00'
+            ws3.cell(row=row,column=4,value=t.get("valor_aprobado",0)).number_format = '#,##0.00'
             row += 1
         ws3.cell(row=row,column=3,value="TOTAL SEMANA").font = Font(bold=True)
         ws3.cell(row=row,column=4,value=s["total"]).font = Font(bold=True)
-        ws3.cell(row=row,column=4).number_format = '"$"#,##0.00'
+        ws3.cell(row=row,column=4).number_format = '#,##0.00'
         row += 2
     for col in "ABCD": ws3.column_dimensions[col].width = 28
 
@@ -1868,11 +1868,11 @@ def exportar_excel_periodo_pago(pp_id: int):
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=ri, column=c, value=v)
             if c in (2, 3, 4, 5):
-                cell.number_format = '"$"#,##0.00'
+                cell.number_format = '#,##0.00'
         total_transf += total_row
     tr = len(resumen_data) + 3
     ws1.cell(row=tr, column=4, value="TOTAL").font = Font(bold=True)
-    ws1.cell(row=tr, column=5, value=total_transf).number_format = '"$"#,##0.00'
+    ws1.cell(row=tr, column=5, value=total_transf).number_format = '#,##0.00'
     ws1.cell(row=tr, column=5).font = Font(bold=True)
     for col, w in zip("ABCDE", [30, 16, 16, 16, 18]):
         ws1.column_dimensions[col].width = w
@@ -1896,12 +1896,12 @@ def exportar_excel_periodo_pago(pp_id: int):
         for c, v in enumerate([
             t["agente_nombre"], t["fecha_gasto"], t.get("categoria_nombre", ""),
             t.get("comprobante", ""), t.get("descripcion", ""), t["valor"],
-            t["estado"].upper(), t.get("valor_aprobado") or "", t.get("motivo_rechazo", "")
+            t["estado"].upper(), t.get("valor_aprobado"), t.get("motivo_rechazo", "")
         ], 1):
             cell = ws2.cell(row=ri, column=c, value=v)
             cell.fill = PatternFill("solid", fgColor=color)
             if c in (6, 8):
-                cell.number_format = '"$"#,##0.00'
+                cell.number_format = '#,##0.00'
     for col, w in zip("ABCDEFGHI", [28, 12, 16, 18, 32, 14, 14, 14, 30]):
         ws2.column_dimensions[col].width = w
 
