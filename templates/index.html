@@ -384,12 +384,24 @@ async function renderDashboard() {
   const pendientes = allTickets.filter(t => t.estado === 'pendiente');
   const cantPendientes = pendientes.length;
   const totalPendiente = pendientes.reduce((s, t) => s + t.valor, 0);
+  // Totales por mes/año seleccionado -> alimentan la tabla "Resumen por Agente" y su fila TOTAL
   const totalAprobado  = state.resumen.reduce((s, a) => s + a.total_aprobado + a.total_debito, 0);
   const totalPagado    = state.resumen.reduce((s, a) => s + (a.total_pagado||0), 0);
   const totalRechazado = state.resumen.reduce((s, a) => s + a.total_rechazado, 0);
   const totalTransferir = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito + (a.total_pagado||0)), 0);
   const periodoActivo = await api('GET', '/periodos_pago/activo').catch(() => null);
   state.periodoActivo = periodoActivo;
+  // Totales de las 4 tarjetas superiores -> por PERÍODO DE PAGO activo (no por fecha del ticket)
+  const ppStats = { pend:0, cantPend:0, aprob:0, cantAprob:0, pagado:0, cantPagado:0, rech:0, cantRech:0 };
+  if (periodoActivo) {
+    const rpp = await api('GET', `/resumen/periodo_pago?periodo_pago_id=${periodoActivo.id}`).catch(() => []);
+    for (const a of rpp) {
+      ppStats.pend  += a.pendiente;  ppStats.cantPend   += a.cant_pendientes;
+      ppStats.aprob += a.aprobado;   ppStats.cantAprob  += a.cant_aprobados + a.cant_debito;
+      ppStats.pagado += a.pagado;    ppStats.cantPagado += a.cant_pagados;
+      ppStats.rech  += a.rechazado;  ppStats.cantRech   += a.cant_rechazados;
+    }
+  }
   const ppLabel = periodoActivo
     ? `<span style="font-size:12px;color:var(--gray500);padding:4px 8px;background:var(--ice);border-radius:6px">🗂️ Período activo: <strong>${String(periodoActivo.numero).padStart(3,'0')} - ${periodoActivo.nombre}</strong></span>`
     : `<span style="font-size:12px;color:#dc2626;padding:4px 8px;background:#fef2f2;border-radius:6px">⚠️ Sin período abierto</span>`;
@@ -397,11 +409,12 @@ async function renderDashboard() {
   document.getElementById('content').innerHTML = `
     <div id="presup-card-container"></div>
     ${periodBar()}
+    <div style="font-size:12px;color:var(--gray500);margin:2px 2px 10px">Totales del período de pago activo${periodoActivo ? `: <strong style="color:var(--navy)">${String(periodoActivo.numero).padStart(3,'0')} — ${periodoActivo.nombre}</strong>` : ' — ninguno abierto'}</div>
     <div class="stats-grid">
-      <div class="stat-card yellow"><div class="label">⏳ Pendiente Revisión</div><div class="value">${cantPendientes}</div><div class="sub">${fmt(totalPendiente)} presentado</div></div>
-      <div class="stat-card green"><div class="label">✅ Aprobado (sin pagar)</div><div class="value">${fmt(totalAprobado)}</div><div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_aprobados||0)+(a.cant_debito||0),0)} tickets · pendiente de pago</div></div>
-      <div class="stat-card"><div class="label">💸 Ya Pagado</div><div class="value" style="color:#0369a1">${fmt(totalPagado)}</div><div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_pagados||0),0)} tickets pagados</div></div>
-      <div class="stat-card red"><div class="label">❌ Rechazado</div><div class="value">${fmt(totalRechazado)}</div><div class="sub">${state.resumen.reduce((s,a)=>s+(a.cant_rechazados||0),0)} tickets</div></div>
+      <div class="stat-card yellow"><div class="label">⏳ Pendiente Revisión</div><div class="value">${ppStats.cantPend}</div><div class="sub">${fmt(ppStats.pend)} presentado</div></div>
+      <div class="stat-card green"><div class="label">✅ Aprobado (sin pagar)</div><div class="value">${fmt(ppStats.aprob)}</div><div class="sub">${ppStats.cantAprob} tickets · pendiente de pago</div></div>
+      <div class="stat-card"><div class="label">💸 Ya Pagado</div><div class="value" style="color:#0369a1">${fmt(ppStats.pagado)}</div><div class="sub">${ppStats.cantPagado} tickets pagados</div></div>
+      <div class="stat-card red"><div class="label">❌ Rechazado</div><div class="value">${fmt(ppStats.rech)}</div><div class="sub">${ppStats.cantRech} tickets</div></div>
     </div>
     <div class="card" style="margin-bottom:24px">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
