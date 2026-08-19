@@ -538,6 +538,48 @@ def resumen(anio: int, mes: int):
             result.append(d)
         return result
 
+@app.get("/api/resumen/periodo_pago")
+def resumen_periodo_pago(periodo_pago_id: Optional[int] = None):
+    """Totales por agente para un período de pago (o todo el historial si no se pasa id).
+       Replica la lógica del export: Aprobado = aprobado + débito parcial; TOTAL = Aprobado + Pagado."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        q = f"""
+            SELECT a.id, a.nombre,
+                COALESCE(SUM(CASE WHEN t.estado='pendiente'      THEN t.valor          END), 0) as total_pendiente,
+                COALESCE(SUM(CASE WHEN t.estado='aprobado'       THEN t.valor_aprobado END), 0) as total_aprobado,
+                COALESCE(SUM(CASE WHEN t.estado='debito_parcial' THEN t.valor_aprobado END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN t.estado='pagado'         THEN t.valor_aprobado END), 0) as total_pagado,
+                COALESCE(SUM(CASE WHEN t.estado='rechazado'      THEN t.valor          END), 0) as total_rechazado,
+                COUNT(CASE WHEN t.estado='pendiente'      THEN 1 END) as cant_pendientes,
+                COUNT(CASE WHEN t.estado='aprobado'       THEN 1 END) as cant_aprobados,
+                COUNT(CASE WHEN t.estado='debito_parcial' THEN 1 END) as cant_debito,
+                COUNT(CASE WHEN t.estado='pagado'         THEN 1 END) as cant_pagados,
+                COUNT(CASE WHEN t.estado='rechazado'      THEN 1 END) as cant_rechazados
+            FROM agentes a
+            LEFT JOIN tickets t ON a.id = t.agente_id"""
+        params = []
+        if periodo_pago_id:
+            q += f" AND t.periodo_pago_id={PH}"
+            params.append(periodo_pago_id)
+        q += """
+            WHERE a.activo = 1
+            GROUP BY a.id, a.nombre
+            ORDER BY a.nombre"""
+        cur.execute(q, params)
+        result = []
+        for d in _rows(cur):
+            d["aprobado"]  = d["total_aprobado"] + d["total_debito"]
+            d["pagado"]    = d["total_pagado"]
+            d["rechazado"] = d["total_rechazado"]
+            d["pendiente"] = d["total_pendiente"]
+            d["total"]     = d["aprobado"] + d["pagado"]
+            d["cant_total"] = (d["cant_aprobados"] + d["cant_debito"] + d["cant_pagados"]
+                               + d["cant_rechazados"] + d["cant_pendientes"])
+            if d["cant_total"] > 0:
+                result.append(d)
+        return result
+
 @app.get("/api/resumen/semanal")
 def resumen_semanal(anio: int, mes: int):
     with get_db() as conn:
