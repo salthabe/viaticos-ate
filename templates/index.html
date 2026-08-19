@@ -175,17 +175,18 @@ tbody td { padding: 11px 16px; font-size: 13.5px; color: var(--gray700); vertica
     </div>
     <nav class="sidebar-nav">
       <div class="nav-section">Principal</div>
-      <button class="nav-item active" onclick="navigate('dashboard')"><span class="icon">📊</span> Panel de Control</button>
-      <button class="nav-item" onclick="navigate('tickets')"><span class="icon">🧾</span> Tickets</button>
+      <button class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')"><span class="icon">📊</span> Panel de Control</button>
+      <button class="nav-item" data-page="tickets" onclick="navigate('tickets')"><span class="icon">🧾</span> Tickets</button>
+      <button class="nav-item" data-page="resumen_periodo" onclick="navigate('resumen_periodo')"><span class="icon">💰</span> Resumen por Período</button>
       <div class="nav-section">Gestión</div>
-      <button class="nav-item" onclick="navigate('agentes')"><span class="icon">👥</span> Agentes</button>
-      <button class="nav-item" onclick="navigate('topes')"><span class="icon">🎯</span> Topes Mensuales</button>
-      <button class="nav-item" onclick="navigate('periodos_pago')"><span class="icon">🗂️</span> Períodos de Pago</button>
+      <button class="nav-item" data-page="agentes" onclick="navigate('agentes')"><span class="icon">👥</span> Agentes</button>
+      <button class="nav-item" data-page="topes" onclick="navigate('topes')"><span class="icon">🎯</span> Topes Mensuales</button>
+      <button class="nav-item" data-page="periodos_pago" onclick="navigate('periodos_pago')"><span class="icon">🗂️</span> Períodos de Pago</button>
       <div class="nav-section">Registros</div>
-      <button class="nav-item" onclick="navigate('actas')"><span class="icon">📋</span> Libro de Actas</button>
+      <button class="nav-item" data-page="actas" onclick="navigate('actas')"><span class="icon">📋</span> Libro de Actas</button>
       <div class="nav-section">Reportes</div>
-      <button class="nav-item" onclick="navigate('reportes')"><span class="icon">📈</span> Reportes</button>
-      <button class="nav-item" onclick="navigate('exportar')"><span class="icon">📥</span> Exportar</button>
+      <button class="nav-item" data-page="reportes" onclick="navigate('reportes')"><span class="icon">📈</span> Reportes</button>
+      <button class="nav-item" data-page="exportar" onclick="navigate('exportar')"><span class="icon">📥</span> Exportar</button>
     </nav>
     <div class="sidebar-footer">ATE Viáticos v1.0</div>
   </aside>
@@ -209,7 +210,8 @@ const state = {
   ticketMeses: [], ticketVista: 'mes', dashVista: 'mes',
   filtroPeriodoPago: null, filtroPeriodoPagoNombre: null, filtroPeriodoManual: false,
   periodoActivo: null, presupuestoPeriodoSeleccionado: null,
-  ticketSeleccionados: new Set()
+  ticketSeleccionados: new Set(),
+  resumenPeriodoPP: null, resumenPeriodoManual: false
 };
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
@@ -336,15 +338,15 @@ async function navigate(page) {
   state.page = page;
   if (page !== 'tickets') { state.ticketSeleccionados.clear(); renderBarraMasiva([]); }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const navMap = { dashboard: 0, tickets: 1, agentes: 3, topes: 4, periodos_pago: 5, actas: 6, reportes: 7, exportar: 8 };
-  document.querySelectorAll('.nav-item')[navMap[page]]?.classList.add('active');
-  const titles = { dashboard: 'Panel de Control', tickets: 'Tickets de Viáticos', agentes: 'Gestión de Agentes', topes: 'Topes Mensuales', periodos_pago: 'Períodos de Pago', actas: 'Libro de Actas', reportes: 'Reportes y Estadísticas', exportar: 'Exportar Reportes' };
+  document.querySelector(`.nav-item[data-page="${page}"]`)?.classList.add('active');
+  const titles = { dashboard: 'Panel de Control', tickets: 'Tickets de Viáticos', resumen_periodo: 'Resumen por Período de Pago', agentes: 'Gestión de Agentes', topes: 'Topes Mensuales', periodos_pago: 'Períodos de Pago', actas: 'Libro de Actas', reportes: 'Reportes y Estadísticas', exportar: 'Exportar Reportes' };
   document.getElementById('topbar-title').textContent = titles[page] || page;
   document.getElementById('topbar-actions').innerHTML = '';
   document.getElementById('content').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b">Cargando...</div>';
   await loadAll();
   if (page === 'dashboard') await renderDashboard();
   else if (page === 'tickets') await renderTickets();
+  else if (page === 'resumen_periodo') await renderResumenPeriodo();
   else if (page === 'agentes') renderAgentes();
   else if (page === 'topes') await renderTopes();
   else if (page === 'periodos_pago') await renderPeriodosPago();
@@ -557,6 +559,69 @@ function renderTicketsTableHTML(tickets) {
   if (!tickets.length) return '<div class="empty-state"><div class="emoji">🔍</div><p>Sin tickets</p><small>Ajustar filtros o agregar nuevos tickets</small></div>';
   const hayPend = tickets.some(t => t.estado === 'pendiente');
   return `<table><thead><tr><th style="width:34px;text-align:center">${hayPend ? `<input type="checkbox" id="chk-sel-all" onchange="toggleSeleccionarTodos(this.checked)" title="Seleccionar todos los pendientes visibles" style="width:15px;height:15px;cursor:pointer">` : ''}</th><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Período</th><th>Comprobante</th><th>Descripción</th><th>Valor</th><th>Aprobado</th><th>Estado</th><th></th></tr></thead><tbody>${tickets.map(t => `<tr><td style="text-align:center">${t.estado === 'pendiente' ? `<input type="checkbox" class="chk-ticket" onchange="toggleSeleccionTicket(${t.id}, this.checked)" ${state.ticketSeleccionados.has(t.id) ? 'checked' : ''} style="width:15px;height:15px;cursor:pointer">` : ''}</td><td class="td-name">${t.agente_nombre}</td><td>${formatDate(t.fecha_gasto)}</td><td><span class="badge" style="background:var(--ice2);color:var(--navy);font-size:11px">${t.categoria_nombre||'-'}</span></td><td style="font-size:11px;color:var(--gray500)">${t.periodo_pago_numero ? String(t.periodo_pago_numero).padStart(3,'0')+' - '+t.periodo_pago_nombre : '—'}</td><td style="font-family:'DM Mono',monospace;font-size:12px">${t.comprobante||'-'}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.descripcion||'-'}</td><td class="td-amount">${fmt(t.valor)}</td><td class="td-amount">${t.valor_aprobado != null ? fmt(t.valor_aprobado) : '-'}</td><td>${estadoBadge(t.estado)}</td><td><div style="display:flex;gap:4px">${t.estado === 'pendiente' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revisarTicket(${t.id},'modal')" title="Revisar">⋯</button>` : ''}${(t.estado === 'aprobado' || t.estado === 'debito_parcial') ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="marcarPagado(${t.id})" title="Marcar como pagado" style="color:#0369a1">💸</button>` : ''}${t.estado === 'pagado' ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="desmarcarPagado(${t.id})" title="Desmarcar pago" style="color:#64748b;font-size:11px">↩</button>` : ''}${(t.estado === 'aprobado' || t.estado === 'debito_parcial' || t.estado === 'rechazado') ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="revertirPendiente(${t.id})" title="Volver a Pendiente" style="color:#d97706">↺</button>` : ''}<button class="btn btn-ghost btn-sm btn-icon" onclick="verAdjuntosTicket(${t.id})" title="Adjuntos">📎</button><button class="btn btn-ghost btn-sm btn-icon" onclick="verHistorialTicket(${t.id})" title="Historial">🕐</button><button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarTicket(${t.id})" title="Eliminar">🗑</button></div></td></tr>`).join('')}</tbody></table>`;
+}
+
+// ── RESUMEN POR PERÍODO DE PAGO ────────────────────────────────────────────
+async function renderResumenPeriodo() {
+  const periodos = await api('GET', '/periodos_pago').catch(() => []);
+  if (!state.resumenPeriodoManual && state.resumenPeriodoPP == null) {
+    const activo = periodos.find(p => p.estado === 'abierto');
+    if (activo) state.resumenPeriodoPP = activo.id;
+  }
+  const ppOpts = `<option value="">📚 Todo el historial</option>${periodos.map(pp => `<option value="${pp.id}" ${state.resumenPeriodoPP == pp.id ? 'selected' : ''}>${pp.estado === 'abierto' ? '🟢' : '🔒'} ${String(pp.numero).padStart(3, '0')} - ${pp.nombre}</option>`).join('')}`;
+  document.getElementById('topbar-actions').innerHTML = `<select class="select" style="font-size:12.5px;padding:5px 10px;min-width:220px" onchange="cambiarPeriodoResumen(this.value)">${ppOpts}</select>`;
+
+  const qs = state.resumenPeriodoPP ? `?periodo_pago_id=${state.resumenPeriodoPP}` : '';
+  const data = await api('GET', '/resumen/periodo_pago' + qs).catch(() => []);
+
+  const ppSel = periodos.find(p => p.id == state.resumenPeriodoPP);
+  const rotulo = ppSel ? `${String(ppSel.numero).padStart(3, '0')} - ${ppSel.nombre}` : 'Todo el historial';
+
+  const tot = data.reduce((a, r) => ({
+    aprobado: a.aprobado + r.aprobado, pagado: a.pagado + r.pagado,
+    rechazado: a.rechazado + r.rechazado, pendiente: a.pendiente + r.pendiente,
+    total: a.total + r.total
+  }), { aprobado: 0, pagado: 0, rechazado: 0, pendiente: 0, total: 0 });
+
+  const filas = data.length ? data.map(r => `<tr>
+      <td class="td-name">${r.nombre}</td>
+      <td class="td-amount" style="text-align:right;color:var(--green)">${r.aprobado ? fmt(r.aprobado) : '<span style="color:var(--gray300)">—</span>'}</td>
+      <td class="td-amount" style="text-align:right;color:var(--red)">${r.rechazado ? fmt(r.rechazado) : '<span style="color:var(--gray300)">—</span>'}</td>
+      <td class="td-amount" style="text-align:right;color:#0369a1">${r.pagado ? fmt(r.pagado) : '<span style="color:var(--gray300)">—</span>'}</td>
+      <td class="td-amount" style="text-align:right;color:var(--gray500)">${r.pendiente ? fmt(r.pendiente) : '<span style="color:var(--gray300)">—</span>'}</td>
+      <td class="td-amount" style="text-align:right;font-weight:700;color:var(--navy)">${fmt(r.total)}</td>
+    </tr>`).join('') : `<tr><td colspan="6"><div class="empty-state"><div class="emoji">📭</div><p>Sin movimientos en este período</p><small>No hay tickets cargados para el período seleccionado</small></div></td></tr>`;
+
+  const filaTotal = data.length ? `<tr style="background:var(--ice);border-top:2px solid var(--ice2)">
+      <td style="font-weight:700;color:var(--navy)">TOTAL · ${data.length} agente${data.length !== 1 ? 's' : ''}</td>
+      <td class="td-amount" style="text-align:right;font-weight:700;color:var(--green)">${fmt(tot.aprobado)}</td>
+      <td class="td-amount" style="text-align:right;font-weight:700;color:var(--red)">${fmt(tot.rechazado)}</td>
+      <td class="td-amount" style="text-align:right;font-weight:700;color:#0369a1">${fmt(tot.pagado)}</td>
+      <td class="td-amount" style="text-align:right;font-weight:700;color:var(--gray500)">${fmt(tot.pendiente)}</td>
+      <td class="td-amount" style="text-align:right;font-weight:800;color:var(--navy)">${fmt(tot.total)}</td>
+    </tr>` : '';
+
+  document.getElementById('content').innerHTML = `
+    <div style="font-size:13px;color:var(--gray500);margin-bottom:14px">Totales por agente para: <strong style="color:var(--navy)">${rotulo}</strong> — mismos números que la hoja «Transferencias» del Excel (TOTAL = Aprobado + Pagado).</div>
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card green"><div class="label">✅ Aprobado (sin pagar)</div><div class="value">${fmt(tot.aprobado)}</div></div>
+      <div class="stat-card"><div class="label">💸 Pagado</div><div class="value" style="color:#0369a1">${fmt(tot.pagado)}</div></div>
+      <div class="stat-card red"><div class="label">❌ Rechazado</div><div class="value">${fmt(tot.rechazado)}</div></div>
+      <div class="stat-card"><div class="label">Σ TOTAL (Aprob. + Pagado)</div><div class="value">${fmt(tot.total)}</div></div>
+    </div>
+    <div class="card"><div class="card-header"><span class="card-title">Detalle por agente</span><span class="badge" style="background:var(--ice2);color:var(--navy)">${rotulo}</span></div>
+      <div class="card-body">
+        <table>
+          <thead><tr><th>Agente</th><th style="text-align:right">✅ Aprobado</th><th style="text-align:right">❌ Rechazado</th><th style="text-align:right">💸 Pagado</th><th style="text-align:right">⏳ Pendiente</th><th style="text-align:right">Σ TOTAL</th></tr></thead>
+          <tbody>${filas}${filaTotal}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+function cambiarPeriodoResumen(id) {
+  state.resumenPeriodoPP = id ? parseInt(id) : null;
+  state.resumenPeriodoManual = true;
+  renderResumenPeriodo();
 }
 
 function renderAgentes() {
