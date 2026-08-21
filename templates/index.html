@@ -44,6 +44,8 @@ body { font-family: 'DM Sans', sans-serif; background: var(--gray50); color: var
 .presup-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 12px; }
 .presup-titulo { font-size: 13px; font-weight: 600; opacity: 0.9; letter-spacing: .05em; text-transform: uppercase; }
 .presup-periodo { font-size: 13px; opacity: 0.8; margin-top: 2px; }
+.presup-select { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--navy); background: rgba(255,255,255,0.92); border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; padding: 4px 10px; cursor: pointer; max-width: 260px; }
+.presup-select:focus { outline: 2px solid rgba(255,255,255,0.7); }
 .presup-input-wrap { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.18); padding: 6px 12px; border-radius: 8px; }
 .presup-input-wrap span { opacity: 0.7; font-size: 14px; }
 .presup-input-wrap input { background: transparent; border: none; color: white; font-size: 15px; font-weight: 600; width: 140px; outline: none; text-align: right; font-family: 'DM Mono', monospace; }
@@ -210,6 +212,7 @@ const state = {
   ticketMeses: [], ticketVista: 'mes', dashVista: 'mes',
   filtroPeriodoPago: null, filtroPeriodoPagoNombre: null, filtroPeriodoManual: false,
   periodoActivo: null, presupuestoPeriodoSeleccionado: null,
+  dashPeriodoPago: null,
   ticketSeleccionados: new Set(),
   resumenPeriodoPP: null, resumenPeriodoManual: false
 };
@@ -245,23 +248,28 @@ async function loadTickets() {
 }
 
 // ── PRESUPUESTO ──
-async function renderPresupuestoCard() {
+async function renderPresupuestoCard(cfg = {}) {
   const cont = document.getElementById('presup-card-container');
   if (!cont) return;
-  let ppId = state.presupuestoPeriodoSeleccionado || state.filtroPeriodoPago;
+  const periodos = cfg.periodos || await api('GET', '/periodos_pago').catch(() => []);
+  let ppId = cfg.ppId != null ? cfg.ppId : (state.presupuestoPeriodoSeleccionado || state.filtroPeriodoPago);
   if (!ppId) {
-    try { const a = await api('GET', '/periodos_pago/activo'); if (a) { state.periodoActivo = a; ppId = a.id; } } catch(e) {}
+    const activo = periodos.find(p => p.estado === 'abierto');
+    if (activo) { state.periodoActivo = activo; ppId = activo.id; }
   }
   if (!ppId) {
     cont.innerHTML = `<div class="presup-card"><div class="presup-sin-periodo">⚠ No hay período de pago activo. Creá uno desde "Períodos de Pago".</div></div>`;
     return;
   }
-  let data, pp;
-  try {
-    [data, pp] = await Promise.all([api('GET', `/presupuesto/${ppId}`), obtenerPeriodoPago(ppId)]);
-  } catch(e) { cont.innerHTML = ''; return; }
+  let data;
+  try { data = await api('GET', `/presupuesto/${ppId}`); }
+  catch(e) { cont.innerHTML = ''; return; }
+  const pp = periodos.find(p => p.id == ppId);
   const periodoLabel = pp ? `${String(pp.numero).padStart(3,'0')} — ${pp.nombre}` : `Período #${ppId}`;
   const cerrado = pp && pp.estado === 'cerrado';
+  const periodoHTML = cfg.showSelector
+    ? `<select class="presup-select" onchange="cambiarPeriodoDash(this.value)">${periodos.map(p => `<option value="${p.id}" ${p.id == ppId ? 'selected' : ''}>${p.estado === 'abierto' ? '🟢' : '🔒'} ${String(p.numero).padStart(3,'0')} — ${p.nombre}</option>`).join('')}</select>`
+    : `<div class="presup-periodo">${periodoLabel} ${cerrado ? '🔒' : ''}</div>`;
   let claseSaldo = 'saldo-ok';
   if (data.monto > 0) {
     const pctSaldo = data.saldo / data.monto;
@@ -273,13 +281,13 @@ async function renderPresupuestoCard() {
       <div class="presup-header">
         <div>
           <div class="presup-titulo">💰 Presupuesto del Período</div>
-          <div class="presup-periodo">${periodoLabel} ${cerrado ? '🔒' : ''}</div>
+          ${periodoHTML}
         </div>
         ${!cerrado ? `
           <div class="presup-input-wrap">
             <span>$</span>
-            <input type="number" id="inputPresupuesto" value="${data.monto || ''}" placeholder="0.00" step="0.01" min="0" onkeydown="if(event.key==='Enter') guardarPresupuesto()">
-            <button class="presup-btn" onclick="guardarPresupuesto()">💾 Guardar</button>
+            <input type="number" id="inputPresupuesto" value="${data.monto || ''}" placeholder="0.00" step="0.01" min="0" onkeydown="if(event.key==='Enter') guardarPresupuesto(${ppId})">
+            <button class="presup-btn" onclick="guardarPresupuesto(${ppId})">💾 Guardar</button>
           </div>
         ` : `<div style="font-size:12px;opacity:0.8;padding:6px 12px;background:rgba(255,255,255,0.1);border-radius:6px">Período cerrado — solo lectura</div>`}
       </div>
@@ -311,18 +319,24 @@ async function obtenerPeriodoPago(id) {
   try { const ps = await api('GET', '/periodos_pago'); return ps.find(p => p.id == id); } catch { return null; }
 }
 
-async function guardarPresupuesto() {
+async function guardarPresupuesto(ppIdArg) {
   const input = document.getElementById('inputPresupuesto');
   if (!input) return;
   const monto = parseFloat(input.value);
   if (isNaN(monto) || monto < 0) return toast('Ingresá un monto válido', 'error');
-  const ppId = state.presupuestoPeriodoSeleccionado || state.filtroPeriodoPago || (state.periodoActivo && state.periodoActivo.id);
+  const ppId = ppIdArg || state.presupuestoPeriodoSeleccionado || state.filtroPeriodoPago || (state.periodoActivo && state.periodoActivo.id);
   if (!ppId) return toast('No hay período activo', 'error');
   try {
     await api('POST', '/presupuesto', { periodo_pago_id: ppId, monto });
     toast('Presupuesto guardado 💰', 'success');
-    await renderPresupuestoCard();
+    if (state.page === 'dashboard') await renderDashboard();
+    else renderPresupuestoCard();
   } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function cambiarPeriodoDash(id) {
+  state.dashPeriodoPago = id ? parseInt(id) : null;
+  await renderDashboard();
 }
 
 function toast(msg, type='success') {
@@ -391,10 +405,16 @@ async function renderDashboard() {
   const totalTransferir = state.resumen.reduce((s, a) => s + (a.total_aprobado + a.total_debito + (a.total_pagado||0)), 0);
   const periodoActivo = await api('GET', '/periodos_pago/activo').catch(() => null);
   state.periodoActivo = periodoActivo;
-  // Totales de las 4 tarjetas superiores -> por PERÍODO DE PAGO activo (no por fecha del ticket)
+  // Período que se está mirando en el Panel (elegible con el selector de la tarjeta; por defecto el activo)
+  const periodosDash = await api('GET', '/periodos_pago').catch(() => []);
+  let dashPP = state.dashPeriodoPago;
+  if (dashPP && !periodosDash.find(p => p.id == dashPP)) dashPP = null;
+  dashPP = dashPP || (periodoActivo && periodoActivo.id) || null;
+  const ppSel = periodosDash.find(p => p.id == dashPP) || periodoActivo;
+  // Totales de las 4 tarjetas superiores -> por PERÍODO DE PAGO seleccionado (no por fecha del ticket)
   const ppStats = { pend:0, cantPend:0, aprob:0, cantAprob:0, pagado:0, cantPagado:0, rech:0, cantRech:0 };
-  if (periodoActivo) {
-    const rpp = await api('GET', `/resumen/periodo_pago?periodo_pago_id=${periodoActivo.id}`).catch(() => []);
+  if (dashPP) {
+    const rpp = await api('GET', `/resumen/periodo_pago?periodo_pago_id=${dashPP}`).catch(() => []);
     for (const a of rpp) {
       ppStats.pend  += a.pendiente;  ppStats.cantPend   += a.cant_pendientes;
       ppStats.aprob += a.aprobado;   ppStats.cantAprob  += a.cant_aprobados + a.cant_debito;
@@ -409,7 +429,7 @@ async function renderDashboard() {
   document.getElementById('content').innerHTML = `
     <div id="presup-card-container"></div>
     ${periodBar()}
-    <div style="font-size:12px;color:var(--gray500);margin:2px 2px 10px">Totales del período de pago activo${periodoActivo ? `: <strong style="color:var(--navy)">${String(periodoActivo.numero).padStart(3,'0')} — ${periodoActivo.nombre}</strong>` : ' — ninguno abierto'}</div>
+    <div style="font-size:12px;color:var(--gray500);margin:2px 2px 10px">Totales del período${ppSel ? `: <strong style="color:var(--navy)">${String(ppSel.numero).padStart(3,'0')} — ${ppSel.nombre}</strong>${ppSel.estado === 'cerrado' ? ' 🔒 (cerrado)' : (periodoActivo && ppSel.id === periodoActivo.id ? ' 🟢 (activo)' : '')}` : ' — ninguno abierto'} · elegís el período en la tarjeta de arriba</div>
     <div class="stats-grid">
       <div class="stat-card yellow"><div class="label">⏳ Pendiente Revisión</div><div class="value">${ppStats.cantPend}</div><div class="sub">${fmt(ppStats.pend)} presentado</div></div>
       <div class="stat-card green"><div class="label">✅ Aprobado (sin pagar)</div><div class="value">${fmt(ppStats.aprob)}</div><div class="sub">${ppStats.cantAprob} tickets · pendiente de pago</div></div>
@@ -450,7 +470,7 @@ async function renderDashboard() {
       </div>
     </div>
     ${cantPendientes > 0 ? `<div class="card"><div class="card-header"><span class="card-title">⏳ Tickets Pendientes de Revisión</span><span class="badge badge-pendiente">${cantPendientes}</span></div><div class="card-body"><table><thead><tr><th>Agente</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Valor</th><th>Acciones</th></tr></thead><tbody>${pendientes.map(t => `<tr><td class="td-name">${t.agente_nombre}</td><td>${formatDate(t.fecha_gasto)}</td><td><span class="badge" style="background:var(--ice2);color:var(--navy)">${t.categoria_nombre || '-'}</span></td><td>${t.descripcion || '-'}</td><td class="td-amount">${fmt(t.valor)}</td><td><div style="display:flex;gap:6px"><button class="btn btn-green btn-sm" onclick="revisarTicket(${t.id}, 'rapido_aprobado')">✓ Aprobar</button><button class="btn btn-ghost btn-sm" onclick="revisarTicket(${t.id}, 'modal')">⋯ Revisar</button></div></td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
-  renderPresupuestoCard();
+  renderPresupuestoCard({ ppId: dashPP, showSelector: true, periodos: periodosDash });
 }
 
 async function renderTickets() {
